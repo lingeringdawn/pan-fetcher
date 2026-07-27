@@ -852,6 +852,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         // Rebuild chip bar with filtered tags
         if(j.all_tags)window._currentAllTags=j.all_tags;
         if(j.all_groups)window._currentAllGroups=j.all_groups;
+        document.getElementById('search-keyword').value=kw;
         buildGroupChips(document.getElementById('search-results-wrap'),document.getElementById('search-results'),document.getElementById('search-q')?.value||'');
         document.getElementById('search-results').scrollIntoView({block:'start'});
       }catch(e){console.error(e);}
@@ -904,7 +905,17 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       var allTags=window._currentAllTags||[];
       var groups;
       if(allTags&&allTags.length){
-        groups=allTags;
+        groups=allTags.slice(); // copy
+        // Merge active filter tags into groups so selections persist across rebuilds
+        var gf=activeRSSFilters||[];
+        if(gf.length){
+          var seen={};
+          groups.forEach(function(g){seen[g.toLowerCase()]=true;});
+          gf.forEach(function(f){
+            var t=f.trim();
+            if(t&&!seen[t.toLowerCase()]){groups.push(t);seen[t.toLowerCase()]=true;}
+          });
+        }
       }else{
         groups=clientGroups;
       }
