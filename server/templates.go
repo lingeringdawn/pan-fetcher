@@ -770,7 +770,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           <td class="muted" style="font-size:11px;text-align:center;">{{add $i 1}}</td>
           <td>{{if $r.PageURL}}<a href="{{$r.PageURL}}" target="_blank">{{$r.Title}}</a>{{else}}{{$r.Title}}{{end}}</td>
           <td class="muted">{{$r.SizeFmt}}</td><td>{{$r.Seeders}}</td><td class="muted" style="font-size:11px;">{{$r.DateFmt}}</td><td class="muted">{{$r.IndexerName}}</td>
-          <td>{{if $r.MagnetURL}}<button data-magnet="{{$r.MagnetURL}}" onclick="addTaskWithBrowse(this.getAttribute('data-magnet'))" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>{{end}}</td>
+          <td>{{if $r.MagnetURL}}<button data-magnet="{{$r.MagnetURL}}" data-title="{{$r.Title}}" onclick="addTaskWithBrowse(this)" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>{{end}}</td>
         </tr>{{end}}</tbody></table>
       <div id="pagination-bar" style="display:flex;justify-content:center;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap;"></div>
       </div>
@@ -1395,6 +1395,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         fetch('/search/clear-cache',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(){location.href='/search';});
       }
       var pendingMagnet='';
+      var pendingTitle='';
 
       // Note: searchTotal, pageSize, currentPage, totalPages, searchDone
       // are declared above in the search page template section.
@@ -1402,7 +1403,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       function buildRowHTML(item, idx, pageStart){
         var num=pageStart+idx+1;
         var title=item.page_url?'<a href="'+item.page_url+'" target="_blank">'+(item.title||'')+'</a>':(item.title||'');
-        var magnetBtn=item.magnet_url?'<button data-magnet="'+item.magnet_url.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" onclick="addTaskWithBrowse(this.getAttribute(\'data-magnet\'))" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>':'';
+        var magnetBtn=item.magnet_url?'<button data-magnet="'+item.magnet_url.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" data-title="'+item.title.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" onclick="addTaskWithBrowse(this)" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>':'';
         return '<tr data-title="'+(item.title||'')+'" data-group="'+(item.group||'')+'"><td class="muted" style="font-size:11px;text-align:center;">'+num+'</td><td>'+title+'</td><td class="muted">'+(item.size||'-')+'</td><td>'+(item.seeders||0)+'</td><td class="muted" style="font-size:11px;">'+(item.date||'')+'</td><td class="muted">'+(item.indexer||'')+'</td><td>'+magnetBtn+'</td></tr>';
       }
 
@@ -1476,8 +1477,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         }catch(e){alertModal('请求失败: '+e.message);}
         btn.disabled=false;btn.textContent='测试';
       }
-      async function addTaskWithBrowse(magnet){
-        pendingMagnet=magnet;
+      async function addTaskWithBrowse(el){
+        pendingMagnet=el.getAttribute('data-magnet');
+        pendingTitle=el.getAttribute('data-title')||'';
         window._browseShowSubdir=true;
         browseCallback=function(id){var sp=document.getElementById('browse-subdir')?.value?.trim()||'';closeModal();doAddTask(id,sp);};
         browseDirs('0');
@@ -1488,6 +1490,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           var body='tasks='+encodeURIComponent(pendingMagnet);
           if(cid&&cid!=='0')body+='&cid='+encodeURIComponent(cid);
           if(savepath)body+='&savepath='+encodeURIComponent(savepath);
+          if(pendingTitle)body+='&title='+encodeURIComponent(pendingTitle);
           var r=await fetch('/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body});
           var j=await r.json();
           if(j.status==='ok'){alertModal('{{index .T "task_added"}}');}else{alertModal(j.message||'{{index .T "add_failed"}}');}

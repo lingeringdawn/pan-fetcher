@@ -1815,9 +1815,13 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[task] web submitted %d tasks, cid=%s", len(task.Tasks), task.Cid)
 	ws := s.loadWebSettings()
 	// Extract human-readable names from magnets for notification
+	// Prefer the title from the search result, fall back to magnet dn=
+	title := strings.TrimSpace(r.FormValue("title"))
 	names := make([]string, 0, len(task.Tasks))
 	for _, m := range task.Tasks {
-		if n := extractNameFromMagnet(m); n != "" {
+		if title != "" {
+			names = append(names, title)
+		} else if n := extractNameFromMagnet(m); n != "" {
 			names = append(names, n)
 		} else {
 			names = append(names, m)
