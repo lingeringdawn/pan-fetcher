@@ -104,7 +104,7 @@ func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[search] subscribed: name=%s url=%s", name, rssURL)
-	http.Redirect(w, r, "/?subscribed=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/subs?subscribed=1", http.StatusSeeOther)
 }
 
 // buildRssURL constructs a local aggregated RSS feed URL from search parameters.
