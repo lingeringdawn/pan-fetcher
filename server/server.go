@@ -1814,7 +1814,18 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[task] web submitted %d tasks, cid=%s", len(task.Tasks), task.Cid)
 	ws := s.loadWebSettings()
-	notify.Send(notify.TaskSubmitted(len(task.Tasks), task.Cid, task.Tasks), ws.NotifyLog || ws.NotifyTask)
+	// Extract human-readable names from magnets for notification
+	names := make([]string, 0, len(task.Tasks))
+	for _, m := range task.Tasks {
+		if n := extractNameFromMagnet(m); n != "" {
+			names = append(names, n)
+		} else {
+			names = append(names, m)
+		}
+	}
+	subKey := "task-" + time.Now().Format("150405")
+	notify.RecordItems(subKey, names)
+	notify.Send(notify.TaskSubmitted(len(task.Tasks), task.Cid, names), ws.NotifyLog || ws.NotifyTask)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"ok","message":"%s"}`, trf(s.langFromAgent(), "tasks_submitted_fmt", len(task.Tasks)))
 }
