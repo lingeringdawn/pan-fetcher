@@ -1,7 +1,7 @@
-﻿# pan-fetcher 路 115 缃戠洏 RSS BT 涓嬭浇璁㈤槄宸ュ叿
+# pan-fetcher · 115 网盘 RSS BT 下载订阅工具
 
 <p align="center">
-  <strong>鑱氬悎鎼滅储 路 Jackett/Prowlarr 闆嗘垚 路 TMDB 鍙戠幇 路 鑷姩璁㈤槄 路 绂荤嚎涓嬭浇 路 鏂囦欢绠＄悊</strong>
+  <strong>聚合搜索 · Jackett/Prowlarr 集成 · TMDB 发现 · 自动订阅 · 离线下载 · 文件管理</strong>
 </p>
 
 <p align="center">
@@ -10,60 +10,75 @@
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go" alt="go"></a>
 </p>
 
-<p align="center"><strong>涓枃</strong> | <a href="#english">English</a></p>
+<p align="center"><strong>中文</strong> | <a href="#english">English</a></p>
 
 ---
 
-鑷姩杩界暘 / 杩藉墽宸ュ叿銆傛悳绱㈣祫婧?鈫?娣诲姞璁㈤槄 鈫?鑷姩鎺ㄩ€?115 绂荤嚎涓嬭浇锛學eb 闈㈡澘绠＄悊鍏ㄦ祦绋嬨€傛敮鎸?Cookies / 鎵爜鐧诲綍锛屾墍鏈夋搷浣滃潎閫氳繃 115 瀹樻柟 API 杩涜銆?
-## 鉁?鐗规€?
-### 馃幀 TMDB 鍙戠幇
+自动追番 / 追剧工具。搜索资源 → 添加订阅 → 自动推送 115 离线下载，Web 面板管理全流程。支持 Cookies / 扫码登录，所有操作均通过 115 官方 API 进行。
 
-鎼滅储鐢靛奖鍜屽墽闆嗭紝鏌ョ湅瀹屾暣璇︽儏锛堟捣鎶ャ€佺畝浠嬨€佽瘎鍒嗐€佺被鍨嬶級锛屼竴閿烦杞仛鍚堟悳绱㈣幏鍙栬祫婧愩€?
-### 馃攳 鑱氬悎鎼滅储
+## ✨ 特性
 
-鍐呯疆澶氫釜 BT 绱㈠紩鍣紝Cardigann YAML 鍏煎鍙嚜琛屾墿灞曘€傛爣绛剧瓫閫夈€佸叧閿瘝杩囨护銆佸垎椤垫祻瑙堛€傛悳绱㈢粨鏋滆嚜鍔ㄥ幓閲嶃€?
-<p align="center"><img src=".github/images/1738.jpg" alt="璧勬簮鎼滅储" width="70%"></p>
+### 🎬 TMDB 发现
 
-### 馃摗 Jackett / Prowlarr 闆嗘垚
+搜索电影和剧集，查看完整详情（海报、简介、评分、类型），一键跳转聚合搜索获取资源。
 
-鑷姩鍙戠幇瀹炰緥涓殑鍏ㄩ儴绱㈠紩鍣紝鎵归噺绠＄悊銆佽繛鎺ユ祴璇曘€傛悳绱㈢粨鏋滄爣娉ㄦ潵婧愶紝鍙嫭绔嬮€夋嫨鍙備笌鎼滅储鐨勭储寮曞櫒銆?
-<p align="center"><img src=".github/images/1741.jpg" alt="绱㈠紩鍣? width="70%"></p>
+### 🔍 聚合搜索
 
-### 馃搵 RSS 璁㈤槄
+内置多个 BT 索引器，Cardigann YAML 兼容可自行扩展。标签筛选、关键词过滤、分页浏览。搜索结果自动去重。
 
-瀹氭椂鎶撳彇銆佹櫤鑳藉幓閲嶃€佸叧閿瘝杩囨护銆佺紦瀛樼鐞嗐€傛敮鎸佹湰鍦板拰 Jackett 绱㈠紩鍣ㄧ殑 RSS 鑱氬悎銆?
-<p align="center"><img src=".github/images/1746.jpg" alt="璁㈤槄绠＄悊" width="70%"></p>
+<p align="center"><img src=".github/images/1738.jpg" alt="资源搜索" width="70%"></p>
 
-### 馃摜 绂荤嚎涓嬭浇
+### 📡 Jackett / Prowlarr 集成
 
-纾佸姏 / ed2k / http 鎵归噺鎻愪氦锛岀姸鎬佸垎鏍忥紝浠诲姟娓呯悊銆?
-<p align="center"><img src=".github/images/1740.jpg" alt="绂荤嚎涓嬭浇" width="70%"></p>
+自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。
 
-### 馃搨 鏂囦欢绠＄悊
+<p align="center"><img src=".github/images/1741.jpg" alt="索引器" width="70%"></p>
 
-115 缃戠洏鐩綍娴忚銆佹柊寤恒€侀噸鍛藉悕銆佺Щ鍔ㄣ€佸鍒躲€佸垹闄ゃ€?
-<p align="center"><img src=".github/images/1745.jpg" alt="鏂囦欢绠＄悊" width="70%"></p>
+### 📋 RSS 订阅
 
-### 馃搳 浠〃鐩?
-杩愯姒傝锛氭帹閫佺粺璁°€佽闃呯姸鎬併€佺储寮曞櫒鏁伴噺銆佺紦瀛樻潯鐩€佹渶杩戞柊澧炶祫婧愩€?
-<p align="center"><img src=".github/images/1760.jpg" alt="浠〃鐩? width="70%"></p>
+定时抓取、智能去重、关键词过滤、缓存管理。支持本地和 Jackett 索引器的 RSS 聚合。
 
-### 馃敂 閫氱煡鎺ㄩ€?
-浼佷笟寰俊 Webhook 闆嗘垚锛屾敮鎸佸绫诲瀷鎺ㄩ€佸紑鍏炽€?
-<p align="center"><img src=".github/images/1000006373.jpg" alt="浼佷笟寰俊閫氱煡" width="48%"></p>
+<p align="center"><img src=".github/images/1746.jpg" alt="订阅管理" width="70%"></p>
 
-### 馃摐 杩愯鏃ュ織
+### 📥 离线下载
 
-瀹炴椂鏃ュ織杈撳嚭锛岃嚜鍔ㄥ埛鏂帮紝渚夸簬鎺掓煡闂銆?
-<p align="center"><img src=".github/images/1747.jpg" alt="杩愯鏃ュ織" width="70%"></p>
+磁力 / ed2k / http 批量提交，状态分栏，任务清理。
 
-### 鈿欙笍 閮ㄧ讲鍙嬪ソ
+<p align="center"><img src=".github/images/1740.jpg" alt="离线下载" width="70%"></p>
 
-Docker 涓€閿儴缃层€丩inux systemd 瀹夎鑴氭湰銆佸骞冲彴棰勭紪璇戜簩杩涘埗銆乄eb 鐣岄潰閰嶇疆銆?
-<p align="center"><img src=".github/images/1755.jpg" alt="璁剧疆" width="70%"></p>
+### 📂 文件管理
+
+115 网盘目录浏览、新建、重命名、移动、复制、删除。
+
+<p align="center"><img src=".github/images/1745.jpg" alt="文件管理" width="70%"></p>
+
+### 📊 仪表盘
+
+运行概览：推送统计、订阅状态、索引器数量、缓存条目、最近新增资源。
+
+<p align="center"><img src=".github/images/1760.jpg" alt="仪表盘" width="70%"></p>
+
+### 🔔 通知推送
+
+企业微信 Webhook 集成，支持多类型推送开关。
+
+<p align="center"><img src=".github/images/1000006373.jpg" alt="企业微信通知" width="48%"></p>
+
+### 📜 运行日志
+
+实时日志输出，自动刷新，便于排查问题。
+
+<p align="center"><img src=".github/images/1747.jpg" alt="运行日志" width="70%"></p>
+
+### ⚙️ 部署友好
+
+Docker 一键部署、Linux systemd 安装脚本、多平台预编译二进制、Web 界面配置。
+
+<p align="center"><img src=".github/images/1755.jpg" alt="设置" width="70%"></p>
 
 
-## 馃殌 蹇€熷紑濮?
+## 🚀 快速开始
+
 ### Docker
 
 **Linux / macOS**
@@ -78,96 +93,105 @@ curl -fsSL https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/sc
 iwr -useb https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/docker-setup.ps1 | iex
 ```
 
-娴忚鍣ㄦ墦寮€ `http://localhost:8115`锛岃繘鍏ヨ缃〉瀹屾垚閰嶇疆銆備篃鎻愪緵 [GHCR 闀滃儚](https://github.com/lingeringdawn/pan-fetcher/pkgs/container/pan-fetcher)銆?
-### 棰勭紪璇戜簩杩涘埗
+浏览器打开 `http://localhost:8115`，进入设置页完成配置。也提供 [GHCR 镜像](https://github.com/lingeringdawn/pan-fetcher/pkgs/container/pan-fetcher)。
 
-浠?[Releases](https://github.com/lingeringdawn/pan-fetcher/releases) 涓嬭浇瀵瑰簲骞冲彴鏂囦欢锛岃В鍘嬪嵆鍙繍琛屻€?
+### 预编译二进制
+
+从 [Releases](https://github.com/lingeringdawn/pan-fetcher/releases) 下载对应平台文件，解压即可运行。
+
 | Linux amd64 | Linux arm64 | macOS amd64 | macOS arm64 | Windows amd64 |
 |:--:|:--:|:--:|:--:|:--:|
 | `tar.gz` | `tar.gz` | `tar.gz` | `tar.gz` | `zip` |
 
-### Linux 涓€閿剼鏈?
+### Linux 一键脚本
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/install-release.sh | sudo bash
 ```
 
-鑷姩瀹夎涓?systemd 鏈嶅姟锛屾敮鎸?`install` / `update` / `uninstall` / `purge`銆?
-### 浠庢簮鐮佺紪璇?
+自动安装为 systemd 服务，支持 `install` / `update` / `uninstall` / `purge`。
+
+### 从源码编译
+
 ```bash
 git clone https://github.com/lingeringdawn/pan-fetcher.git
 cd pan-fetcher && go build -ldflags="-s -w" -o pan-fetcher .
 ./pan-fetcher server
 ```
 
-## 馃枼锔?椤甸潰瀵艰埅
+## 🖥️ 页面导航
 
-| 椤甸潰 | 璺敱 | 璇存槑 |
+| 页面 | 路由 | 说明 |
 |------|------|------|
-| 浠〃鐩?| `/` | 杩愯姒傝銆佹渶杩戞柊澧炶祫婧?|
-| TMDB 鍙戠幇 | `/discover` | 褰辫鎼滅储銆佽鎯呮煡鐪嬨€佷竴閿悳璧勬簮 |
-| 绂荤嚎涓嬭浇 | `/tasks` | 鎵归噺鎻愪氦銆佷换鍔＄鐞?|
-| 鑱氬悎鎼滅储 | `/search` | 澶氱储寮曞櫒鎼滅储銆佹爣绛剧瓫閫?|
-| 绱㈠紩鍣?| `/indexers` | 婵€娲荤鐞嗐€佽繛鎺ユ祴璇?|
-| 鏂囦欢绠＄悊 | `/fs` | 115 缃戠洏娴忚涓庢搷浣?|
-| 璁㈤槄绠＄悊 | `/subs` | RSS 澧炲垹鏀广€佺紦瀛樼鐞?|
-| 杩愯鏃ュ織 | `/log` | 瀹炴椂鏃ュ織 |
-| 璁剧疆 | `/settings` | 鐧诲綍銆佷唬鐞嗐€侀€氱煡銆丣ackett銆佺増鏈洿鏂?|
-| 鍏充簬 | `/about` | 鐗堟湰涓庤嚧璋?|
+| 仪表盘 | `/` | 运行概览、最近新增资源 |
+| TMDB 发现 | `/discover` | 影视搜索、详情查看、一键搜资源 |
+| 离线下载 | `/tasks` | 批量提交、任务管理 |
+| 聚合搜索 | `/search` | 多索引器搜索、标签筛选 |
+| 索引器 | `/indexers` | 激活管理、连接测试 |
+| 文件管理 | `/fs` | 115 网盘浏览与操作 |
+| 订阅管理 | `/subs` | RSS 增删改、缓存管理 |
+| 运行日志 | `/log` | 实时日志 |
+| 设置 | `/settings` | 登录、代理、通知、Jackett、版本更新 |
+| 关于 | `/about` | 版本与致谢 |
 
-## 鈱笍 CLI 鍛戒护
+## ⌨️ CLI 命令
 
 ```bash
-pan-fetcher server                     # 鍚姩 Web 闈㈡澘
-pan-fetcher magnet --link "magnet:..." # 娣诲姞绂荤嚎浠诲姟
-pan-fetcher fs ls [dir]                # 娴忚缃戠洏鐩綍
+pan-fetcher server                     # 启动 Web 面板
+pan-fetcher magnet --link "magnet:..." # 添加离线任务
+pan-fetcher fs ls [dir]                # 浏览网盘目录
 ```
 
-## 馃敡 閰嶇疆鍙傝€?
+## 🔧 配置参考
+
 ```toml
 # config.toml
 [server]
 port = 8115
-# domain = "pan.example.com"           # 鍩熷悕璁块棶
-# cert_file = "/certs/fullchain.pem"   # HTTPS 璇佷功
+# domain = "pan.example.com"           # 域名访问
+# cert_file = "/certs/fullchain.pem"   # HTTPS 证书
 # key_file = "/certs/privkey.pem"
 
 [notify]
 wework_webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 
 [proxy]
-http = "http://127.0.0.1:7890"         # HTTP 浠ｇ悊锛堣闂?Jackett 绛夛級
+http = "http://127.0.0.1:7890"         # HTTP 代理（访问 Jackett 等）
 ```
 
-> 澶ч儴鍒嗛厤缃彲鍦?Web 璁剧疆椤电洿鎺ヤ慨鏀癸紝鏃犻渶鎵嬪姩缂栬緫鏂囦欢銆?
-## 馃洜锔?鎶€鏈爤
+> 大部分配置可在 Web 设置页直接修改，无需手动编辑文件。
 
-Go 1.25 路 SQLite 路 鍗曚綋 `html/template`锛堥浂鍓嶇渚濊禆锛?路 [elevengo](https://github.com/Nahuimi/elevengo) 115 API 路 Cardigann YAML 绱㈠紩寮曟搸 路 Torznab API
+## 🛠️ 技术栈
 
-## 馃檹 鑷磋阿
+Go 1.25 · SQLite · 单体 `html/template`（零前端依赖） · [elevengo](https://github.com/Nahuimi/elevengo) 115 API · Cardigann YAML 索引引擎 · Torznab API
 
-- [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud) 鈥?椤圭洰鍘熷瀷
-- [Prowlarr](https://github.com/Prowlarr/Prowlarr) / [Jackett](https://github.com/Jackett/Jackett) 鈥?绱㈠紩寮曟搸涓?Torznab API 鍙傝€?- [Nahuimi/elevengo](https://github.com/Nahuimi/elevengo) 鈥?115 API 搴?
+## 🙏 致谢
+
+- [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud) — 项目原型
+- [Prowlarr](https://github.com/Prowlarr/Prowlarr) / [Jackett](https://github.com/Jackett/Jackett) — 索引引擎与 Torznab API 参考
+- [Nahuimi/elevengo](https://github.com/Nahuimi/elevengo) — 115 API 库
+
 ---
 
 ## English
 
-<p align="center"><a href="#">涓枃</a> | <strong>English</strong></p>
+<p align="center"><a href="#">中文</a> | <strong>English</strong></p>
 
-Automated media downloader for 115 cloud storage. Search across BT indexers, discover movies & TV shows via TMDB, subscribe to RSS feeds, auto-push to offline tasks 鈥?all managed via a clean Web UI.
+Automated media downloader for 115 cloud storage. Search across BT indexers, discover movies & TV shows via TMDB, subscribe to RSS feeds, auto-push to offline tasks — all managed via a clean Web UI.
 
 ### Features
 
-- **馃幀 TMDB Discover** 鈥?Search movies & TV shows, view full details (poster, overview, rating, genres), one-click jump to aggregated search.
-- **馃攳 Aggregated Search** 鈥?Built-in indexers + Jackett/Prowlarr for hundreds more. Tag filter, keyword filter, pagination, auto-dedup.
-- **馃摗 Jackett/Prowlarr** 鈥?Auto-discover, batch activate, connection test, source labels.
-- **馃搵 RSS Subscriptions** 鈥?Scheduled fetch, smart dedup, keyword filter, cache management.
-- **馃摜 Offline Download** 鈥?Magnet/ed2k/http batch submit with status tabs.
-- **馃搨 File Manager** 鈥?Browse and manage 115 cloud files (mkdir, rename, move, copy, delete).
-- **馃搳 Dashboard** 鈥?Stats overview, recent subscription items.
-- **馃敂 Notifications** 鈥?WeChat Work webhook with per-event toggles.
-- **馃摐 Runtime Log** 鈥?Real-time log output with auto-refresh.
-- **馃惓 Docker** 鈥?One-command deploy via `docker-compose`, also on GHCR.
-- **鈿欙笍 Web Admin** 鈥?CN/EN bilingual, HTTPS, password auth, in-app update.
+- **🎬 TMDB Discover** — Search movies & TV shows, view full details (poster, overview, rating, genres), one-click jump to aggregated search.
+- **🔍 Aggregated Search** — Built-in indexers + Jackett/Prowlarr for hundreds more. Tag filter, keyword filter, pagination, auto-dedup.
+- **📡 Jackett/Prowlarr** — Auto-discover, batch activate, connection test, source labels.
+- **📋 RSS Subscriptions** — Scheduled fetch, smart dedup, keyword filter, cache management.
+- **📥 Offline Download** — Magnet/ed2k/http batch submit with status tabs.
+- **📂 File Manager** — Browse and manage 115 cloud files (mkdir, rename, move, copy, delete).
+- **📊 Dashboard** — Stats overview, recent subscription items.
+- **🔔 Notifications** — WeChat Work webhook with per-event toggles.
+- **📜 Runtime Log** — Real-time log output with auto-refresh.
+- **🐳 Docker** — One-command deploy via `docker-compose`, also on GHCR.
+- **⚙️ Web Admin** — CN/EN bilingual, HTTPS, password auth, in-app update.
 
 ### Quick Start
 
@@ -236,7 +260,7 @@ http = "http://127.0.0.1:7890"
 
 ### Tech Stack
 
-Go 1.25 路 SQLite 路 single `html/template` (zero frontend deps) 路 [elevengo](https://github.com/Nahuimi/elevengo) 路 Cardigann YAML 路 Torznab API
+Go 1.25 · SQLite · single `html/template` (zero frontend deps) · [elevengo](https://github.com/Nahuimi/elevengo) · Cardigann YAML · Torznab API
 
 ### Credits
 
