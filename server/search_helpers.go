@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/indexer"
+	"github.com/lingeringdawn/pan-fetcher/indexer"
 )
 
 // dedupKey returns a compact deduplication key.  Uses the most specific

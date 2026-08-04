@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/config"
 )
 
 // TorrentHashCache caches .torrent URL → info hash mappings.

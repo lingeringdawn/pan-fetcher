@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/config"
 )
 
 var (

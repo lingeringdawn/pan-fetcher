@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/cloudfs"
+	"github.com/lingeringdawn/pan-fetcher/cloudfs"
 )
 
 // entryJSON is the JSON-serialisable form of a cloudfs.Entry.

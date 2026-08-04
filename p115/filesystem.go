@@ -9,7 +9,7 @@ import (
 	"github.com/deadblue/elevengo"
 	llErrors "github.com/deadblue/elevengo/lowlevel/errors"
 	"github.com/deadblue/elevengo/option"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/cloudfs"
+	"github.com/lingeringdawn/pan-fetcher/cloudfs"
 )
 
 // FileSystemOption holds provider-level configuration for FileSystem.

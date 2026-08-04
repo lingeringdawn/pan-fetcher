@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/cloudfs"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/p115"
+	"github.com/lingeringdawn/pan-fetcher/cloudfs"
+	"github.com/lingeringdawn/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/p115"
 	"github.com/spf13/cobra"
 )
 

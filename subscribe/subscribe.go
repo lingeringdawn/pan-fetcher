@@ -4,8 +4,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/media"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/store"
+	"github.com/lingeringdawn/pan-fetcher/media"
+	"github.com/lingeringdawn/pan-fetcher/store"
 )
 
 // MatchResult describes the result of matching a torrent against subscriptions.

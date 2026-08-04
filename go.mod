@@ -1,4 +1,4 @@
-module github.com/mguyenanastacio-glitch/pan-fetcher
+module github.com/lingeringdawn/pan-fetcher
 
 go 1.25.0
 

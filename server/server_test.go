@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/deadblue/elevengo"
-	p115pkg "github.com/mguyenanastacio-glitch/pan-fetcher/p115"
+	p115pkg "github.com/lingeringdawn/pan-fetcher/p115"
 )
 
 type fakeServerAgent struct {

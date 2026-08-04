@@ -11,12 +11,12 @@ import (
 
 	"github.com/deadblue/elevengo"
 	"github.com/deadblue/elevengo/option"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/media"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/request"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/rsssite"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/store"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/subscribe"
+	"github.com/lingeringdawn/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/media"
+	"github.com/lingeringdawn/pan-fetcher/request"
+	"github.com/lingeringdawn/pan-fetcher/rsssite"
+	"github.com/lingeringdawn/pan-fetcher/store"
+	"github.com/lingeringdawn/pan-fetcher/subscribe"
 )
 
 var defaultChunkSize = 200

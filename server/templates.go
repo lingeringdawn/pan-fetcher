@@ -1354,18 +1354,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <table style="width:100%;font-size:13px;border-collapse:collapse;">
           <tr><td style="padding:4px 0;color:var(--muted);width:80px;">{{index .T "about_version"}}</td><td><strong>pan-fetcher {{.AboutVersion}}</strong></td></tr>
           <tr><td style="padding:4px 0;color:var(--muted);">Go</td><td>1.23</td></tr>
-          <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_author"}}</td><td>mguyenanastacio-glitch</td></tr>
+          <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_author"}}</td><td>lingeringdawn</td></tr>
         </table>
       </div>
     </div>
     <div class="card panel" style="margin-top:12px;">
       <h3 style="margin:0 0 8px;">🔗 {{index .T "about_links"}}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;">
-        <a href="https://github.com/mguyenanastacio-glitch/pan-fetcher" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/lingeringdawn/pan-fetcher" target="_blank" rel="noopener">GitHub</a>
         <span style="color:var(--line);">|</span>
-        <a href="https://github.com/mguyenanastacio-glitch/pan-fetcher/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/lingeringdawn/pan-fetcher/releases" target="_blank" rel="noopener">Releases</a>
         <span style="color:var(--line);">|</span>
-        <a href="https://github.com/mguyenanastacio-glitch/pan-fetcher/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/lingeringdawn/pan-fetcher/issues" target="_blank" rel="noopener">Issues</a>
       </div>
     </div>
     <div class="card panel" style="margin-top:12px;">

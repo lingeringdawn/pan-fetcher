@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/rsssite"
+	"github.com/lingeringdawn/pan-fetcher/rsssite"
 )
 
 func TestStore(t *testing.T) {

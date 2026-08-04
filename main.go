@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mguyenanastacio-glitch/pan-fetcher/cmd"
+	"github.com/lingeringdawn/pan-fetcher/cmd"
 )
 
 func main() {

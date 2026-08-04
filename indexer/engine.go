@@ -22,7 +22,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"gopkg.in/yaml.v3"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/config"
 )
 
 // Engine is the core indexer engine: loads definitions, executes searches.

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/rsssite"
+	"github.com/lingeringdawn/pan-fetcher/rsssite"
 )
 
 type Store struct {

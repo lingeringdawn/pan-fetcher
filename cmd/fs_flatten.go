@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/cloudfs"
+	"github.com/lingeringdawn/pan-fetcher/cloudfs"
 )
 
 var (

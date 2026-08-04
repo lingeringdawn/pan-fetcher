@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/indexer"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/p115"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/rsssite"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/server"
+	"github.com/lingeringdawn/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/indexer"
+	"github.com/lingeringdawn/pan-fetcher/p115"
+	"github.com/lingeringdawn/pan-fetcher/rsssite"
+	"github.com/lingeringdawn/pan-fetcher/server"
 	"github.com/spf13/cobra"
 )
 

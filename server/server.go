@@ -27,13 +27,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/config"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/indexer"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/jackett"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/media"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/notify"
-	p115pkg "github.com/mguyenanastacio-glitch/pan-fetcher/p115"
-	"github.com/mguyenanastacio-glitch/pan-fetcher/rsssite"
+	"github.com/lingeringdawn/pan-fetcher/config"
+	"github.com/lingeringdawn/pan-fetcher/indexer"
+	"github.com/lingeringdawn/pan-fetcher/jackett"
+	"github.com/lingeringdawn/pan-fetcher/media"
+	"github.com/lingeringdawn/pan-fetcher/notify"
+	p115pkg "github.com/lingeringdawn/pan-fetcher/p115"
+	"github.com/lingeringdawn/pan-fetcher/rsssite"
 
 	"github.com/deadblue/elevengo"
 )
@@ -3052,7 +3052,7 @@ func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	info := updateInfo{Current: Version}
 
-	resp, err := s.httpClient().Get("https://api.github.com/repos/mguyenanastacio-glitch/pan-fetcher/releases/latest")
+	resp, err := s.httpClient().Get("https://api.github.com/repos/lingeringdawn/pan-fetcher/releases/latest")
 	if err != nil {
 		json.NewEncoder(w).Encode(info)
 		return
@@ -3100,7 +3100,7 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get latest release info
-	resp, err := s.httpClient().Get("https://api.github.com/repos/mguyenanastacio-glitch/pan-fetcher/releases/latest")
+	resp, err := s.httpClient().Get("https://api.github.com/repos/lingeringdawn/pan-fetcher/releases/latest")
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": tr(lang, "update_fetch_failed") + ": " + err.Error()})
 		return

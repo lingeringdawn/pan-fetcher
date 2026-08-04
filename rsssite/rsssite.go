@@ -7,7 +7,7 @@ import (
 
 	"github.com/dlclark/regexp2"
 
-	"github.com/mguyenanastacio-glitch/pan-fetcher/request"
+	"github.com/lingeringdawn/pan-fetcher/request"
 	"github.com/mmcdole/gofeed"
 )
 
