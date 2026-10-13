@@ -625,7 +625,7 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 		return nil
 	}
 
-	log.Printf("[feed] processing subKey=%q, items=%d", subKey, len(feed.Items))
+	log.Printf("[feed] processing subKey=%q, items=%d, keyword=%q", subKey, len(feed.Items), keyword)
 
 	type candidate struct {
 		magnet string
@@ -685,10 +685,26 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 		log.Printf("[feed] phase-2 dedup skipped %d (torrent was downloaded but already cached)", skippedPhase2)
 	}
 	if len(candidates) == 0 {
-		if skippedKeyword > 0 && skippedPhase1 == 0 && skippedPhase2 == 0 {
-			log.Printf("[feed] no items matched keyword=%q in %s", keyword, rssURL)
-		} else {
-			log.Printf("[feed] all items already cached for keyword=%q in %s", keyword, rssURL)
+		// Report every cause that actually filtered items, so "no new items"
+		// is never misattributed to the cache when the keyword filter is the
+		// real reason (or vice versa).
+		dedupSkipped := skippedPhase1 + skippedPhase2
+		kwLabel := keyword
+		if kwLabel == "" {
+			kwLabel = "<none>"
+		}
+		switch {
+		case skippedKeyword > 0 && dedupSkipped > 0:
+			log.Printf("[feed] no new items for keyword=%q in %s: %d filtered by keyword, %d already cached",
+				kwLabel, rssURL, skippedKeyword, dedupSkipped)
+		case skippedKeyword > 0:
+			log.Printf("[feed] no items matched keyword=%q in %s (%d filtered)",
+				kwLabel, rssURL, skippedKeyword)
+		case dedupSkipped > 0:
+			log.Printf("[feed] all %d items already cached for keyword=%q in %s",
+				dedupSkipped, kwLabel, rssURL)
+		default:
+			log.Printf("[feed] no items found in %s", rssURL)
 		}
 		return nil
 	}

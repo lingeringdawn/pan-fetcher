@@ -107,6 +107,36 @@ func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/subs?subscribed=1", http.StatusSeeOther)
 }
 
+// ensureKeywordParam returns rawURL carrying the keyword query parameter.
+//
+// The keyword must live in the URL (not only in the filter field) because
+// ProcessRSSFeed reads it from there, and the local /rss/search endpoint applies
+// its own keyword filter based on the same parameter.
+//
+// An existing keyword parameter already present in the URL always wins, so a
+// subscription whose URL was built with a filter is never silently overridden;
+// the separate filter field only fills the gap for older subscriptions. This
+// matches the long-standing auto-run behaviour.
+//
+// Returns rawURL unchanged when keyword is blank or the URL cannot be parsed.
+func ensureKeywordParam(rawURL, keyword string) string {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	if strings.TrimSpace(q.Get("keyword")) != "" {
+		return rawURL
+	}
+	q.Set("keyword", keyword)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // buildRssURL constructs a local aggregated RSS feed URL from search parameters.
 func buildRssURL(port int, query string, indexers []string) string {
 	v := url.Values{}

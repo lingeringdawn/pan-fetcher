@@ -1412,15 +1412,10 @@ func (s *Server) autoRunSubscriptions() {
 						}
 					}()
 					if s.Agent != nil && e.Cid != "" {
-						// Backward compat: old subs have filter in e.Filter but not in URL
-						rssURL := feedURL
-						if e.Filter != "" && !strings.Contains(rssURL, "keyword=") {
-							if strings.Contains(rssURL, "?") {
-								rssURL += "&keyword=" + url.QueryEscape(e.Filter)
-							} else {
-								rssURL += "?keyword=" + url.QueryEscape(e.Filter)
-							}
-						}
+						// Backward compat: old subs carry the filter in e.Filter
+						// rather than in the URL. A keyword already present in the
+						// URL wins, so explicit filters are never overridden.
+						rssURL := ensureKeywordParam(feedURL, e.Filter)
 						before := globalDedup.SubCount(subKey)
 						names := s.Agent.ProcessRSSFeed(rssURL, e.Cid, e.SavePath, subKey)
 						after := globalDedup.SubCount(subKey)
@@ -1855,8 +1850,12 @@ func (s *Server) handleRSSFeed(w http.ResponseWriter, r *http.Request) {
 		s.renderMsg(w, "", "err_rss_empty")
 		return
 	}
-	go s.Agent.ProcessRSSFeed(rssURL, cid, savepath, rssURL)
-	log.Printf("[feed] web triggered: %s keyword=%q cid=%s savepath=%q", rssURL, keyword, cid, savepath)
+	// ProcessRSSFeed only reads the keyword parameter from the URL, so the form
+	// field must be merged in. subKey intentionally stays the bare URL to keep
+	// existing dedup cache keys stable.
+	feedURL := ensureKeywordParam(rssURL, keyword)
+	go s.Agent.ProcessRSSFeed(feedURL, cid, savepath, rssURL)
+	log.Printf("[feed] web triggered: %s keyword=%q cid=%s savepath=%q", feedURL, keyword, cid, savepath)
 	s.renderMsgf(w, "quick_started_fmt", rssURL)
 }
 
@@ -4401,7 +4400,7 @@ func (s *Server) handleSubsAction(w http.ResponseWriter, r *http.Request) {
 		savepath := strings.TrimSpace(r.FormValue("savepath"))
 		filter := strings.TrimSpace(r.FormValue("filter"))
 		s.updateRssSub(site, name, cid, savepath, filter)
-		log.Printf("[subs] edit %q on %s (cid=%s, savepath=%q)", name, site, cid, savepath)
+		log.Printf("[subs] edit %q on %s (cid=%s, savepath=%q, filter=%q)", name, site, cid, savepath, filter)
 		http.Redirect(w, r, "/subs", http.StatusSeeOther)
 		return
 	}
@@ -4487,20 +4486,21 @@ func (s *Server) deleteRssSub(site, name string) {
 	globalDedup.ClearSub(name)
 }
 
+// updateRssSub applies edits from the subscription edit form.
+//
+// The edit form is a complete-edit form: it always submits cid, savepath and
+// filter together, so an empty value means "the user cleared this field" rather
+// than "leave it unchanged". Assigning unconditionally is therefore required —
+// guarding each field with `!= ""` made filter (and savepath) impossible to
+// clear once set.
 func (s *Server) updateRssSub(site, name, cid, savepath, filter string) {
 	feeds := s.readRssFeeds()
 	entries := feeds[site]
 	for i, e := range entries {
 		if e.Name == name {
-			if cid != "" {
-				feeds[site][i].Cid = cid
-			}
-			if savepath != "" {
-				feeds[site][i].SavePath = savepath
-			}
-			if filter != "" {
-				feeds[site][i].Filter = filter
-			}
+			feeds[site][i].Cid = cid
+			feeds[site][i].SavePath = savepath
+			feeds[site][i].Filter = filter
 			break
 		}
 	}
@@ -4523,6 +4523,7 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 	}
 	cid := strings.TrimSpace(r.FormValue("cid"))
 	savepath := strings.TrimSpace(r.FormValue("savepath"))
+	filter := strings.TrimSpace(r.FormValue("filter"))
 	// Resolve relative URLs to absolute for local RSS endpoints
 	if strings.HasPrefix(rssURL, "/") {
 		rssURL = fmt.Sprintf("http://127.0.0.1:%d%s", s.Port, rssURL)
@@ -4531,9 +4532,13 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 	if subKey == "" {
 		subKey = rssURL
 	}
+	// Merge the filter field into the URL. ProcessRSSFeed only reads the keyword
+	// parameter from the URL, so passing filter separately would silently drop it.
+	// subKey is derived above, keeping dedup cache keys stable across filter edits.
+	feedURL := ensureKeywordParam(rssURL, filter)
 	go func() {
 		before := globalDedup.SubCount(subKey)
-		names := s.Agent.ProcessRSSFeed(rssURL, cid, savepath, subKey)
+		names := s.Agent.ProcessRSSFeed(feedURL, cid, savepath, subKey)
 		after := globalDedup.SubCount(subKey)
 		newItems := after - before
 		if newItems > 0 {
@@ -4543,7 +4548,7 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[subs] run completed: %s, new=%d", subKey, newItems)
 	}()
-	log.Printf("[subs] run triggered: %s", subKey)
+	log.Printf("[subs] run triggered: %s (filter=%q)", subKey, filter)
 	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
 		w.Header().Set("Content-Type", "application/json")
 		lang := s.langFromAgent()
