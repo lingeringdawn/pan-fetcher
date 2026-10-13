@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/lingeringdawn/pan-fetcher/config"
-	"github.com/lingeringdawn/pan-fetcher/indexer"
 	"github.com/lingeringdawn/pan-fetcher/p115"
 	"github.com/lingeringdawn/pan-fetcher/rsssite"
 	"github.com/lingeringdawn/pan-fetcher/server"
@@ -96,31 +94,10 @@ var (
 			srv.LoadNotifyConfig()
 			srv.LoadJackettConfig()
 
-			// Initialize indexer manager from YAML definitions.
-			// Look in: data dir > working dir > executable dir.
-			dbPath := cfg.Database.Path
-			if !filepath.IsAbs(dbPath) {
-				if abs, err := filepath.Abs(dbPath); err == nil {
-					dbPath = abs
-				}
-			}
-			idxDir := filepath.Join(filepath.Dir(dbPath), "indexers")
-			if _, err := os.Stat(idxDir); err != nil {
-				// Try current working directory
-				idxDir = "indexers"
-				if _, err := os.Stat(idxDir); err != nil {
-					// Try executable directory
-					if exe, err := os.Executable(); err == nil {
-						idxDir = filepath.Join(filepath.Dir(exe), "indexers")
-					}
-				}
-			}
-			if mgr, err := indexer.NewManager(idxDir); err == nil {
-				srv.SetIndexerManager(mgr)
-				log.Printf("[indexer] loaded %d definitions, 0 active (from %s)", mgr.LibraryCount(), idxDir)
-			} else {
-				log.Printf("[indexer] failed to load indexers: %v", err)
-			}
+			// Searching is delegated entirely to Jackett, which owns indexer
+			// definitions. Probe for a local instance on startup so a fresh
+			// install works without visiting the settings page first.
+			srv.AutoDiscoverJackett()
 
 			srv.StartServer()
 		},

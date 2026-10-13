@@ -80,7 +80,6 @@ type Server struct {
 	startTime time.Time
 	fsCache   map[string]fsCacheEntry
 	fsCacheMu sync.Mutex
-	IdxMgr    *indexer.Manager
 
 	// Lightweight caches for expensive per-request operations
 	connCheckLoggedIn bool
@@ -170,7 +169,6 @@ type dashboardData struct {
 	RssURL         string
 	SavedSearches  []savedSearch
 	IndexerList    []indexer.IndexerInfo
-	IndexerLibrary []indexer.IndexerInfo
 	JackettLibrary []jackett.IndexerInfo
 	DedupEntries   []dedupEntry
 	DashStats       dashStats
@@ -729,6 +727,13 @@ func (s *Server) jackettConfig() jackett.Config {
 	}
 }
 
+// jackettConfigured reports whether both the URL and API key are set, which is
+// the minimum needed to search. Jackett is the only search backend, so this
+// gates every search entry point.
+func (s *Server) jackettConfigured() bool {
+	return strings.TrimSpace(s.JackettURL) != "" && strings.TrimSpace(s.JackettAPIKey) != ""
+}
+
 // handleJKAddToJackett adds an indexer to the linked Jackett instance via API.
 // writeJSON writes a JSON object to the response, properly escaping the message.
 func writeJSON(w http.ResponseWriter, ok bool, msg string) {
@@ -1030,7 +1035,6 @@ func New(agent *p115pkg.Agent, port int) *Server {
 		media.InitTMDB(ws.TMDBAPIKey)
 	}
 	// Warm Jackett cache in background
-	s.ensureDefaultIndexers()
 	if s.JackettURL != "" && s.JackettAPIKey != "" {
 		go func() {
 			if jk, err := jackett.ListIndexers(s.jackettConfig()); err == nil {
@@ -1056,11 +1060,6 @@ func (s *Server) SetDomain(domain string) {
 func (s *Server) SetTLS(certFile, keyFile string) {
 	s.CertFile = certFile
 	s.KeyFile = keyFile
-}
-
-// SetIndexerManager sets the indexer manager on the server.
-func (s *Server) SetIndexerManager(m *indexer.Manager) {
-	s.IdxMgr = m
 }
 
 // LoadProxyConfig reads proxy settings from config.toml.
@@ -1104,210 +1103,6 @@ func (s *Server) LoadNotifyConfig() {
 }
 
 // LoadJackettConfig reads Jackett settings from web-settings.json.
-// ensureDefaultIndexers writes the 4 built-in indexer YAMLs if the defs directory is empty.
-func (s *Server) ensureDefaultIndexers() {
-	defDir := "indexers"
-	entries, err := os.ReadDir(defDir)
-	if err != nil {
-		os.MkdirAll(defDir, 0755)
-		entries = nil
-	}
-	hasYAML := false
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".yml") {
-			hasYAML = true
-			break
-		}
-	}
-	if hasYAML {
-		return
-	}
-	log.Printf("[indexer] installing default indexers to %s", defDir)
-	for name, content := range defaultIndexers {
-		os.WriteFile(filepath.Join(defDir, name+".yml"), []byte(content), 0644)
-	}
-}
-
-// defaultIndexers are the 4 built-in YAML definitions for initial setup.
-var defaultIndexers = map[string]string{
-	"acgrip": `id: acgrip
-name: ACG.RIP
-language: zh-CN
-type: public
-encoding: UTF-8
-links:
-  - https://acg.rip/
-caps:
-  categories:
-    1: TV
-  modes:
-    search: [q]
-    tv-search: [q, season, ep]
-search:
-  paths:
-    - path: /
-  inputs:
-    term: "{{ .Keywords }}"
-    page: "{{.Page}}"
-  rows:
-    selector: tbody tr
-    after: 2
-  fields:
-    title:
-      selector: td:nth-child(3)
-    category:
-      text: 1
-    details:
-      selector: td:nth-child(3) a
-      attribute: href
-    download:
-      selector: a[href^="magnet:?"]
-      attribute: href
-    magnet:
-      selector: a[href^="magnet:?"]
-      attribute: href
-    size:
-      selector: td:nth-child(5)
-    date:
-      selector: td:nth-child(4) time
-      attribute: datetime
-    seeders:
-      selector: td:nth-child(6)
-`,
-	"dmhy": `id: dmhy
-name: 动漫花园
-language: zh-CN
-type: public
-links:
-  - https://share.dmhy.org/
-caps:
-  categories:
-    1: TV
-  modes:
-    search: [q]
-search:
-  paths:
-    - path: "topics/list"
-  inputs:
-    keyword: "{{ .Keywords }}"
-    sort_id: "0"
-    page: "{{.Page}}"
-  rows:
-    selector: "table#topic_list tbody tr:has(a[href^=\"magnet:?\"])"
-    after: 0
-  fields:
-    title:
-      selector: "td:nth-child(3)"
-    download:
-      selector: "a[href^=\"magnet:?\"]"
-      attribute: href
-    size:
-      selector: "td:nth-child(5)"
-    date:
-      selector: "td:nth-child(1)"
-    seeders:
-      selector: "td:nth-child(6)"
-    leechers:
-      selector: "td:nth-child(7)"
-    category:
-      selector: "td:nth-child(2)"
-    page:
-      selector: "td:nth-child(3) a"
-      attribute: href
-`,
-	"mikan": `id: mikan
-name: Mikan
-language: zh-CN
-type: public
-encoding: UTF-8
-links:
-  - https://mikanani.me/
-caps:
-  categorymappings:
-    - {id: 1, cat: TV/Anime, desc: "Anime"}
-  modes:
-    search: [q]
-    tv-search: [q, season, ep]
-search:
-  paths:
-    - path: "Home/Search"
-  inputs:
-    searchstr: "{{ .Keywords }}"
-    page: "{{.Page}}"
-  rows:
-    selector: table.table-striped tbody tr
-  fields:
-    category:
-      text: 1
-    title:
-      selector: a[href^="/Home/Episode/"]
-    details:
-      selector: a[href^="/Home/Episode/"]
-      attribute: href
-    download:
-      selector: a[href^="/Download/"]
-      attribute: href
-    magnet:
-      selector: a[data-clipboard-text]
-      attribute: data-clipboard-text
-    size:
-      selector: td:nth-child(3)
-    date:
-      selector: td:nth-child(1)
-    seeders:
-      selector: td:nth-child(4)
-`,
-	"nyaasi": `id: nyaasi
-name: Nyaa.si
-language: en-US
-type: public
-encoding: UTF-8
-requestDelay: 2
-links:
-  - https://nyaa.si/
-caps:
-  categorymappings:
-    - {id: 1_0, cat: TV/Anime, desc: "Anime"}
-  modes:
-    search: [q]
-    tv-search: [q, season, ep]
-  allowrawsearch: true
-search:
-  paths:
-    - path: /
-  inputs:
-    q: "{{ .Keywords }}"
-    p: "{{.Page}}"
-    f: "0"
-    c: "0_0"
-  rows:
-    selector: tr.default,tr.danger,tr.success
-  fields:
-    title:
-      selector: "td:nth-child(2) a:last-child"
-    details:
-      selector: "td:nth-child(2) a:last-child"
-      attribute: href
-    download:
-      selector: "a[href$=\".torrent\"]"
-      attribute: href
-    magnet:
-      selector: "a[href^=\"magnet:?\"]"
-      attribute: href
-    size:
-      selector: "td:nth-child(4)"
-    date:
-      selector: "td:nth-child(5)"
-    seeders:
-      selector: "td:nth-child(6)"
-    leechers:
-      selector: "td:nth-child(7)"
-    category:
-      selector: "td:nth-child(1) a"
-      attribute: href
-`,
-}
-
 func (s *Server) LoadJackettConfig() {
 	ws := s.loadWebSettings()
 	s.JackettURL = ws.JackettURL
@@ -1500,14 +1295,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/search/clear-cache", s.authCheck(s.handleSearchClearCache))
 	mux.HandleFunc("/discover", s.authCheck(s.handleDiscover))
 	mux.HandleFunc("/indexers", s.authCheck(s.handleIndexers))
-	mux.HandleFunc("/indexers/test", s.authCheck(s.handleIndexerTest))
-	mux.HandleFunc("/indexers/testall", s.authCheck(s.handleIndexerTestAll))
 	mux.HandleFunc("/indexers/jackett", s.authCheck(s.handleJackettList))
 	mux.HandleFunc("/indexers/jackett/all", s.authCheck(s.handleJackettAll))
 	mux.HandleFunc("/indexers/jackett/add", s.authCheck(s.handleJackettAdd))
-	mux.HandleFunc("/indexers/login", s.authCheck(s.handleIndexerLogin))
-	mux.HandleFunc("/indexers/edit", s.authCheck(s.handleIndexerEdit))
-	mux.HandleFunc("/indexers/delete", s.authCheck(s.handleIndexerDelete))
+	mux.HandleFunc("/indexers/jackett/discover", s.authCheck(s.handleJackettDiscover))
+	mux.HandleFunc("/indexers/jackett/install", s.authCheck(s.handleJackettInstall))
+	mux.HandleFunc("/indexers/jackett/start", s.authCheck(s.handleJackettStart))
 	mux.HandleFunc("/search/subscribe", s.authCheck(s.handleSearchSubscribe))
 	mux.HandleFunc("/rss/search", s.handleRssSearch)
 	mux.HandleFunc("/subs/dirs", s.authCheck(s.handleSubsDirs))
@@ -1535,16 +1328,17 @@ func (s *Server) handleRssSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing q parameter", http.StatusBadRequest)
 		return
 	}
-	if s.IdxMgr == nil {
-		http.Error(w, "indexer not initialized", http.StatusServiceUnavailable)
+	if !s.jackettConfigured() {
+		http.Error(w, "jackett not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Parse indexers from comma-separated list
+	// Parse indexers from comma-separated list. IDs may carry a "jackett:"
+	// prefix depending on how the subscription URL was generated.
 	var indexers []string
 	if idxStr := r.URL.Query().Get("indexers"); idxStr != "" {
 		for _, id := range strings.Split(idxStr, ",") {
-			id = strings.TrimSpace(id)
+			id = strings.TrimPrefix(strings.TrimSpace(id), "jackett:")
 			if id != "" {
 				indexers = append(indexers, id)
 			}
@@ -1556,75 +1350,53 @@ func (s *Server) handleRssSearch(w http.ResponseWriter, r *http.Request) {
 		sortBy = "date"
 	}
 
-	// Separate Jackett-only indexers (jackett: prefix) from local ones
-	var localIndexers []string
-	var hasJackettSelection bool
-	for _, id := range indexers {
-		if strings.HasPrefix(id, "jackett:") {
-			hasJackettSelection = true
-		} else {
-			localIndexers = append(localIndexers, id)
-		}
+	s.jackettActiveMu.Lock()
+	s.loadJackettEnabled()
+	jackettActiveSet := make(map[string]bool)
+	for id := range s.jackettActive {
+		jackettActiveSet[id] = true
 	}
-	var se indexer.SearchAllErrors
-	if len(indexers) > 0 && len(localIndexers) == 0 && hasJackettSelection {
-		se = indexer.SearchAllErrors{Errors: make(map[string]string)}
-	} else {
-		se = s.IdxMgr.SearchAllWithErrors(indexer.SearchRequest{
-			Query:    q,
-			Sort:     sortBy,
-			Indexers: localIndexers,
-			Limit:    1000,
-		})
+	s.jackettActiveMu.Unlock()
+
+	selectedLower := make(map[string]bool, len(indexers))
+	for _, id := range indexers {
+		selectedLower[strings.ToLower(id)] = true
 	}
 
-	// Also include Jackett results in RSS feed
-	if s.JackettURL != "" && s.JackettAPIKey != "" {
-		s.jackettActiveMu.Lock()
-		s.loadJackettEnabled()
-		jackettActiveSet := make(map[string]bool)
-		for id := range s.jackettActive {
-			jackettActiveSet[id] = true
-		}
-		s.jackettActiveMu.Unlock()
-		jc := s.jackettConfig()
-		if jr, err := jackett.Search(jc, q, nil, 0); err == nil {
-			for _, jr := range jr {
-				if len(indexers) == 0 && !jackettActiveSet[jr.Tracker] {
+	se := indexer.SearchAllErrors{Errors: make(map[string]string)}
+	jr, err := jackett.Search(s.jackettConfig(), q, nil, 0)
+	if err != nil {
+		log.Printf("[rss] Jackett search error: %v", err)
+		se.Errors["jackett"] = err.Error()
+	} else {
+		for _, r := range jr {
+			trackerLower := strings.ToLower(r.Tracker)
+			// With no explicit selection, restrict to activated indexers.
+			if len(selectedLower) == 0 {
+				if !jackettActiveSet[trackerLower] {
 					continue
 				}
-				if len(indexers) > 0 {
-					match := false
-					for _, id := range indexers {
-						id = strings.TrimPrefix(id, "jackett:")
-						if id == jr.Tracker {
-							match = true
-							break
-						}
-					}
-					if !match {
-						continue
-					}
-				}
-				var pubDate time.Time
-				if jr.PublishDate != "" {
-					pubDate, _ = time.Parse(time.RFC1123Z, jr.PublishDate)
-					if pubDate.IsZero() {
-						pubDate, _ = time.Parse(time.RFC1123, jr.PublishDate)
-					}
-				}
-				se.Results = append(se.Results, indexer.SearchResult{
-					Title:       jr.Title,
-					MagnetURL:   jr.MagnetURI,
-					PageURL:     jr.Link,
-					Size:        jr.Size,
-					Seeders:     jr.Seeders,
-					IndexerName: "Jackett: " + jr.TrackerName,
-					PublishDate: pubDate,
-				})
+			} else if !selectedLower[trackerLower] {
+				continue
 			}
-		} else if err != nil {
-			log.Printf("[rss] Jackett search error: %v", err)
+			var pubDate time.Time
+			if r.PublishDate != "" {
+				pubDate, _ = time.Parse(time.RFC1123Z, r.PublishDate)
+				if pubDate.IsZero() {
+					pubDate, _ = time.Parse(time.RFC1123, r.PublishDate)
+				}
+			}
+			se.Results = append(se.Results, indexer.SearchResult{
+				Title:       r.Title,
+				MagnetURL:   r.MagnetURI,
+				PageURL:     r.Link,
+				Size:        r.Size,
+				Seeders:     r.Seeders,
+				Leechers:    r.Peers,
+				IndexerID:   r.Tracker,
+				IndexerName: r.TrackerName,
+				PublishDate: pubDate,
+			})
 		}
 	}
 
@@ -1752,13 +1524,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.IdxMgr != nil {
-		data.DashStats.ActiveIndexers = s.IdxMgr.ActiveCount()
-		s.jackettActiveMu.Lock()
-		s.loadJackettEnabled()
-		data.DashStats.ActiveIndexers += len(s.jackettActive)
-		s.jackettActiveMu.Unlock()
-	}
+	// Active indexers are Jackett's activated set.
+	s.jackettActiveMu.Lock()
+	s.loadJackettEnabled()
+	data.DashStats.ActiveIndexers = len(s.jackettActive)
+	s.jackettActiveMu.Unlock()
 
 	// Skip dedup walk — would iterate thousands of entries for a single stat.
 	data.DashStats.CacheEntries = globalDedup.TotalCount()
@@ -2125,6 +1895,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// A partial POST (used by the Jackett discovery flow) must only touch the
+		// fields it actually submits. r.Form records presence, so absent fields
+		// are skipped while an explicitly empty value still clears the setting.
+		has := func(name string) bool {
+			_, ok := r.Form[name]
+			return ok
+		}
 		var changes []string
 
 		// Proxy
@@ -2199,27 +1976,35 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			changes = append(changes, fmt.Sprintf("timezone=%s", v))
 		}
 		// Jackett
-		if v := strings.TrimSpace(r.FormValue("jackett_url")); v != ws.JackettURL {
-			ws.JackettURL = v
-			s.JackettURL = v
-			changes = append(changes, fmt.Sprintf("jackett_url=%s", maskWebhook(v)))
+		if has("jackett_url") {
+			if v := strings.TrimSpace(r.FormValue("jackett_url")); v != ws.JackettURL {
+				ws.JackettURL = v
+				s.JackettURL = v
+				changes = append(changes, fmt.Sprintf("jackett_url=%s", maskWebhook(v)))
+			}
 		}
-		if v := strings.TrimSpace(r.FormValue("jackett_apikey")); v != ws.JackettAPIKey {
-			ws.JackettAPIKey = v
-			s.JackettAPIKey = v
-			changes = append(changes, "jackett_apikey=***")
+		if has("jackett_apikey") {
+			if v := strings.TrimSpace(r.FormValue("jackett_apikey")); v != ws.JackettAPIKey {
+				ws.JackettAPIKey = v
+				s.JackettAPIKey = v
+				changes = append(changes, "jackett_apikey=***")
+			}
 		}
-		if v := strings.TrimSpace(r.FormValue("jackett_admin_password")); v != ws.JackettAdminPassword {
-			ws.JackettAdminPassword = v
-			s.JackettAdminPassword = v
-			changes = append(changes, "jackett_admin_password=***")
+		if has("jackett_admin_password") {
+			if v := strings.TrimSpace(r.FormValue("jackett_admin_password")); v != ws.JackettAdminPassword {
+				ws.JackettAdminPassword = v
+				s.JackettAdminPassword = v
+				changes = append(changes, "jackett_admin_password=***")
+			}
 		}
 		// TMDB
-		if v := strings.TrimSpace(r.FormValue("tmdb_apikey")); v != ws.TMDBAPIKey {
-			ws.TMDBAPIKey = v
-			media.InitTMDB(v)
-			media.SetTMDBProxy(s.ProxyHTTP)
-			changes = append(changes, "tmdb_apikey=***")
+		if has("tmdb_apikey") {
+			if v := strings.TrimSpace(r.FormValue("tmdb_apikey")); v != ws.TMDBAPIKey {
+				ws.TMDBAPIKey = v
+				media.InitTMDB(v)
+				media.SetTMDBProxy(s.ProxyHTTP)
+				changes = append(changes, "tmdb_apikey=***")
+			}
 		}
 		// Page size
 		if v, err := strconv.Atoi(r.FormValue("page_size")); err == nil && v >= 10 && v <= 500 && v != ws.PageSize {
@@ -3366,35 +3151,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Populate indexer list for filter checkboxes
-	if s.IdxMgr != nil {
-		data.IndexerList = s.IdxMgr.List()
-		// Mark local
-		for i := range data.IndexerList {
-			data.IndexerList[i].Source = "local"
-		}
-	}
-	// Add Jackett-activated indexers to filter list (show both with conflict labels)
+	// Populate the indexer filter checkboxes from Jackett's activated indexers.
 	s.jackettActiveMu.Lock()
 	s.loadJackettEnabled()
 	for _, jk := range s.jackettCache {
-		if s.jackettActive[jk.ID] {
-			name := jk.Name
-			for _, loc := range data.IndexerList {
-				if loc.ID == jk.ID {
-					name = jk.Name + " (Jackett)"
-					break
-				}
-			}
-			data.IndexerList = append(data.IndexerList, indexer.IndexerInfo{
-				ID:       "jackett:" + jk.ID,
-				Name:     name,
-				Type:     jk.Type,
-				Language: jk.Language,
-				SiteLink: jk.SiteLink,
-				Source:   "jackett",
-			})
+		if !s.jackettActive[jk.ID] {
+			continue
 		}
+		data.IndexerList = append(data.IndexerList, indexer.IndexerInfo{
+			ID:       "jackett:" + jk.ID,
+			Name:     jk.Name,
+			Type:     jk.Type,
+			Language: jk.Language,
+			SiteLink: jk.SiteLink,
+			Enabled:  true,
+			Source:   "jackett",
+		})
 	}
 	s.jackettActiveMu.Unlock()
 	// Load saved searches
@@ -3415,8 +3187,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			dashboardTemplate.Execute(w, data)
 			return
 		}
-		if s.IdxMgr == nil {
-			data.Error = tr(s.langFromAgent(), "indexer_not_initialized")
+		if !s.jackettConfigured() {
+			data.Error = tr(s.langFromAgent(), "err_jackett_not_configured")
 			dashboardTemplate.Execute(w, data)
 			return
 		}
@@ -3429,7 +3201,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		indexers := r.Form["indexer"]
 
-		// Separate Jackett-activated indexers from local ones for search
+		// Determine which Jackett indexers participate in this search.
 		s.jackettActiveMu.Lock()
 		s.loadJackettEnabled()
 		jackettActiveSet := make(map[string]bool)
@@ -3438,84 +3210,39 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		s.jackettActiveMu.Unlock()
 
-		var localIndexers []string
-		var hasJackettSelection bool
-		var jackettSelectedIDs []string
+		// Selected IDs arrive either prefixed ("jackett:foo") or bare, depending
+		// on which page issued the request; normalise both forms.
+		var selectedIDs []string
 		for _, id := range indexers {
-			if strings.HasPrefix(id, "jackett:") {
-				hasJackettSelection = true
-				jackettSelectedIDs = append(jackettSelectedIDs, strings.TrimPrefix(id, "jackett:"))
-			} else {
-				localIndexers = append(localIndexers, id)
-			}
-		}
-		// Run local and Jackett searches concurrently
-		type searchResult struct {
-			local   indexer.SearchAllErrors
-			jackett []jackett.Result
-			jerr    error
-		}
-		ch := make(chan searchResult, 1)
-		go func() {
-			var sr searchResult
-			var wg sync.WaitGroup
-			wg.Add(2)
-
-			// Local indexer search
-			go func() {
-				defer wg.Done()
-				if !(len(indexers) > 0 && len(localIndexers) == 0 && hasJackettSelection) {
-					sr.local = s.IdxMgr.SearchAllWithErrors(indexer.SearchRequest{
-						Query:    q,
-						Sort:     sortBy,
-						Indexers: localIndexers,
-						Limit:    2000,
-					})
-				} else {
-					sr.local = indexer.SearchAllErrors{Errors: make(map[string]string)}
-				}
-			}()
-
-			// Jackett search
-			go func() {
-				defer wg.Done()
-				if s.JackettURL != "" && s.JackettAPIKey != "" && (len(indexers) == 0 || hasJackettSelection) {
-					jc := s.jackettConfig()
-					sr.jackett, sr.jerr = jackett.Search(jc, q, nil, 0)
-				}
-			}()
-
-			wg.Wait()
-			ch <- sr
-		}()
-
-		sr := <-ch
-		se := sr.local
-		for i := range se.Results {
-			se.Results[i].SizeFmt = formatSize(se.Results[i].Size)
-			if !se.Results[i].PublishDate.IsZero() {
-				se.Results[i].DateFmt = se.Results[i].PublishDate.Format("2006-01-02 15:04")
+			id = strings.TrimPrefix(id, "jackett:")
+			if id != "" {
+				selectedIDs = append(selectedIDs, id)
 			}
 		}
 
-		// Process Jackett results (already fetched in parallel above)
-		if sr.jerr == nil {
-			for _, r := range sr.jackett {
+		// Query Jackett once and filter its results locally. Jackett returns
+		// results from every configured indexer, so per-indexer selection is
+		// applied here rather than by issuing one request per indexer.
+		jc := s.jackettConfig()
+		jackettResults, jerr := jackett.Search(jc, q, nil, 0)
+
+		se := indexer.SearchAllErrors{Errors: make(map[string]string)}
+		if jerr != nil {
+			se.Errors["jackett"] = jerr.Error()
+		} else {
+			selectedLower := make(map[string]bool, len(selectedIDs))
+			for _, id := range selectedIDs {
+				selectedLower[strings.ToLower(id)] = true
+			}
+			for _, r := range jackettResults {
 				trackerLower := strings.ToLower(r.Tracker)
-				if !jackettActiveSet[trackerLower] {
-					continue
-				}
-				if len(jackettSelectedIDs) > 0 {
-					match := false
-					for _, jid := range jackettSelectedIDs {
-						if strings.ToLower(jid) == trackerLower {
-							match = true
-							break
-						}
-					}
-					if !match {
+				// With no explicit selection, only activated indexers are used.
+				if len(selectedLower) == 0 {
+					if !jackettActiveSet[trackerLower] {
 						continue
 					}
+				} else if !selectedLower[trackerLower] {
+					continue
 				}
 				var pubDate time.Time
 				if r.PublishDate != "" {
@@ -3532,15 +3259,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					SizeFmt:     formatSize(r.Size),
 					DateFmt:     formatJackettDate(r.PublishDate),
 					Seeders:     r.Seeders,
-					IndexerName: "Jackett: " + r.TrackerName,
+					Leechers:    r.Peers,
+					IndexerID:   r.Tracker,
+					IndexerName: r.TrackerName,
 					PublishDate: pubDate,
 				})
 			}
-		} else if sr.jerr != nil {
-			if se.Errors == nil {
-				se.Errors = make(map[string]string)
-			}
-			se.Errors["jackett"] = sr.jerr.Error()
 		}
 		data.SearchQuery = q
 		data.SearchKeyword = keyword
@@ -3548,12 +3272,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		data.SearchSort = sortBy
 		data.SearchIndexers = indexers
 		data.SearchErrors = se.Errors
-		// Suppress "not activated" error when Jackett handles the selected indexers
-		if hasJackettSelection && se.Errors != nil {
-			if _, ok := se.Errors["_none_"]; ok && len(se.Results) > 0 {
-				delete(se.Errors, "_none_")
-			}
-		}
 
 		// Cache all results, display first page
 		ws := s.loadWebSettings()
@@ -3562,7 +3280,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			pageSize = 50
 		}
 		searchCacheMu.Lock()
-		// Re-sort combined local + Jackett results after merge
 		indexer.SortResults(se.Results, sortBy)
 		searchCacheFull = dedupSlice(se.Results, nil)
 		// Extract group from first [...] or 【...】 in title (with validation)
@@ -3712,106 +3429,70 @@ func (s *Server) handleSearchClearCache(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
-// searchNextPage fetches the next page of results from local indexers and Jackett.
+// searchNextPage fetches the next page of results from Jackett.
 func (s *Server) searchNextPage(ctx searchContext) []indexer.SearchResult {
 	log.Printf("[search] fetching page %d for %q (indexers: %v)", ctx.NextPage, ctx.Query, ctx.Indexers)
-	var all []indexer.SearchResult
+	if !s.jackettConfigured() {
+		return nil
+	}
 
-	// Parse which are local vs Jackett
-	var localIDs []string
-	var hasJackett bool
+	// Normalise selection: context IDs may carry the "jackett:" prefix.
+	selectedLower := make(map[string]bool, len(ctx.Indexers))
 	for _, id := range ctx.Indexers {
-		if strings.HasPrefix(id, "jackett:") {
-			hasJackett = true
-		} else {
-			localIDs = append(localIDs, id)
+		id = strings.ToLower(strings.TrimPrefix(id, "jackett:"))
+		if id != "" {
+			selectedLower[id] = true
 		}
 	}
 
-	// Local indexers — use Page from context
-	if len(ctx.Indexers) == 0 || len(localIDs) > 0 || !hasJackett {
-		req := indexer.SearchRequest{
-			Query:    ctx.Query,
-			Sort:     ctx.Sort,
-			Indexers: localIDs,
-			Limit:    2000,
-			Page:     ctx.NextPage,
-		}
-		se := s.IdxMgr.SearchAllWithErrors(req)
-		for i := range se.Results {
-			se.Results[i].SizeFmt = formatSize(se.Results[i].Size)
-			if !se.Results[i].PublishDate.IsZero() {
-				se.Results[i].DateFmt = se.Results[i].PublishDate.Format("2006-01-02 15:04")
-			}
-		}
-		all = append(all, se.Results...)
+	s.jackettActiveMu.Lock()
+	s.loadJackettEnabled()
+	jackettActiveSet := make(map[string]bool)
+	for id := range s.jackettActive {
+		jackettActiveSet[id] = true
+	}
+	s.jackettActiveMu.Unlock()
+
+	// Jackett's Torznab API pages in fixed steps of 100 results.
+	const jackettPageSize = 100
+	offset := (ctx.NextPage - 1) * jackettPageSize
+
+	jr, err := jackett.Search(s.jackettConfig(), ctx.Query, nil, offset)
+	if err != nil {
+		log.Printf("[search] page %d Jackett error: %v", ctx.NextPage, err)
+		return nil
 	}
 
-	// Jackett — only when no filter or Jackett indexers selected
-	hasJackettInCtx := false
-	for _, id := range ctx.Indexers {
-		if strings.HasPrefix(id, "jackett:") {
-			hasJackettInCtx = true
-			break
+	all := make([]indexer.SearchResult, 0, len(jr))
+	for _, r := range jr {
+		trackerLower := strings.ToLower(r.Tracker)
+		if len(selectedLower) == 0 {
+			if !jackettActiveSet[trackerLower] {
+				continue
+			}
+		} else if !selectedLower[trackerLower] {
+			continue
 		}
-	}
-	if s.JackettURL != "" && s.JackettAPIKey != "" && (len(ctx.Indexers) == 0 || hasJackettInCtx) {
-		s.jackettActiveMu.Lock()
-		s.loadJackettEnabled()
-		jackettActiveSet := make(map[string]bool)
-		for id := range s.jackettActive {
-			jackettActiveSet[id] = true
-		}
-		s.jackettActiveMu.Unlock()
-
-		// Filter selected Jackett IDs
-		var selectedJackettIDs []string
-		for _, id := range ctx.Indexers {
-			if strings.HasPrefix(id, "jackett:") {
-				selectedJackettIDs = append(selectedJackettIDs, strings.TrimPrefix(id, "jackett:"))
+		var pubDate time.Time
+		if r.PublishDate != "" {
+			pubDate, _ = time.Parse(time.RFC1123Z, r.PublishDate)
+			if pubDate.IsZero() {
+				pubDate, _ = time.Parse(time.RFC1123, r.PublishDate)
 			}
 		}
-
-		jackettOff := (ctx.NextPage - 1) * 100
-		jc := s.jackettConfig()
-		if jr, err := jackett.Search(jc, ctx.Query, nil, jackettOff); err == nil {
-			for _, r := range jr {
-				trackerLower := strings.ToLower(r.Tracker)
-				if !jackettActiveSet[trackerLower] {
-					continue
-				}
-				if len(selectedJackettIDs) > 0 {
-					match := false
-					for _, jid := range selectedJackettIDs {
-						if strings.ToLower(jid) == trackerLower {
-							match = true
-							break
-						}
-					}
-					if !match {
-						continue
-					}
-				}
-				var pubDate time.Time
-				if r.PublishDate != "" {
-					pubDate, _ = time.Parse(time.RFC1123Z, r.PublishDate)
-					if pubDate.IsZero() {
-						pubDate, _ = time.Parse(time.RFC1123, r.PublishDate)
-					}
-				}
-				all = append(all, indexer.SearchResult{
-					Title:       r.Title,
-					MagnetURL:   r.MagnetURI,
-					PageURL:     r.Link,
-					Size:        r.Size,
-					SizeFmt:     formatSize(r.Size),
-					DateFmt:     formatJackettDate(r.PublishDate),
-					Seeders:     r.Seeders,
-					IndexerName: "Jackett: " + r.TrackerName,
-					PublishDate: pubDate,
-				})
-			}
-		}
+		all = append(all, indexer.SearchResult{
+			Title:       r.Title,
+			MagnetURL:   r.MagnetURI,
+			PageURL:     r.Link,
+			Size:        r.Size,
+			SizeFmt:     formatSize(r.Size),
+			DateFmt:     formatJackettDate(r.PublishDate),
+			Seeders:     r.Seeders,
+			Leechers:    r.Peers,
+			IndexerID:   r.Tracker,
+			IndexerName: r.TrackerName,
+			PublishDate: pubDate,
+		})
 	}
 
 	log.Printf("[search] page %d returned %d results", ctx.NextPage, len(all))
@@ -3833,7 +3514,6 @@ func (s *Server) handleIndexers(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		id := r.FormValue("id")
 
-		// Jackett API actions don't need local indexer manager
 		switch action {
 		case "jk_add_to_jackett":
 			s.handleJKAddToJackett(w, r, id)
@@ -3841,21 +3521,6 @@ func (s *Server) handleIndexers(w http.ResponseWriter, r *http.Request) {
 		case "jk_remove_from_jackett":
 			s.handleJKRemoveFromJackett(w, r, id)
 			return
-		}
-
-		if s.IdxMgr == nil {
-			http.Redirect(w, r, "/indexers", http.StatusSeeOther)
-			return
-		}
-		switch action {
-		case "toggle":
-			enabled := r.FormValue("enabled") == "true"
-			s.IdxMgr.SetEnabled(id, enabled)
-			log.Printf("[indexer] %s enabled=%v", id, enabled)
-		case "activate":
-			s.IdxMgr.Activate(id)
-			log.Printf("[indexer] %s activated from library", id)
-			go s.IdxMgr.TestIndexer(id)
 		case "jk_activate":
 			s.jackettActiveMu.Lock()
 			if s.jackettActive == nil {
@@ -3873,35 +3538,26 @@ func (s *Server) handleIndexers(w http.ResponseWriter, r *http.Request) {
 			}
 			s.jackettActiveMu.Unlock()
 			log.Printf("[jackett] %s deactivated", id)
-		case "activate_batch":
+		case "jk_activate_batch":
 			ids := r.Form["ids"]
-			for _, id := range ids {
-				if id != "" {
-					s.IdxMgr.Activate(id)
-					log.Printf("[indexer] %s activated from library (batch)", id)
-					go s.IdxMgr.TestIndexer(id)
+			s.jackettActiveMu.Lock()
+			if s.jackettActive == nil {
+				s.jackettActive = make(map[string]bool)
+			}
+			for _, bid := range ids {
+				if bid != "" {
+					s.jackettActive[bid] = true
 				}
 			}
-		case "deactivate":
-			s.IdxMgr.Deactivate(id)
-			log.Printf("[indexer] %s deactivated to library", id)
-		case "login":
-			username := r.FormValue("username")
-			password := r.FormValue("password")
-			if err := s.IdxMgr.Login(id, username, password); err != nil {
-				if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
-					w.Header().Set("Content-Type", "application/json")
-					fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
-					return
-				}
-				data.Error = err.Error()
-			} else {
-				if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
-					w.Header().Set("Content-Type", "application/json")
-					fmt.Fprintf(w, `{"ok":true,"msg":"%s"}`, tr(s.langFromAgent(), "login_success"))
-					return
-				}
-			}
+			s.saveJackettEnabled()
+			s.jackettActiveMu.Unlock()
+			log.Printf("[jackett] batch activated %d indexers", len(ids))
+		case "jk_deactivate_all":
+			s.jackettActiveMu.Lock()
+			s.jackettActive = make(map[string]bool)
+			s.saveJackettEnabled()
+			s.jackettActiveMu.Unlock()
+			log.Printf("[jackett] all indexers deactivated")
 		}
 		if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
 			w.Header().Set("Content-Type", "application/json")
@@ -3912,25 +3568,7 @@ func (s *Server) handleIndexers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.IdxMgr != nil {
-		data.IndexerList = s.IdxMgr.List()
-	// Build local library: show ALL definitions, mark active ones
-		if s.IdxMgr != nil {
-			data.IndexerLibrary = s.IdxMgr.Library()
-			// Prepend active (enabled) definitions with status
-			activeList := s.IdxMgr.List()
-			for i := range activeList {
-				activeList[i].Enabled = true
-			}
-			data.IndexerLibrary = append(activeList, data.IndexerLibrary...)
-		}
-		// Mark local indexers
-		for i := range data.IndexerList {
-			data.IndexerList[i].Source = "local"
-		}
-	}
-
-	// Use cached Jackett data; trigger background refresh for next request
+	// Use cached Jackett data; trigger background refresh for next request.
 	data.JackettURL = s.JackettURL
 	data.JackettAPIKey = s.JackettAPIKey
 	data.JackettAdminPassword = s.JackettAdminPassword
@@ -3940,30 +3578,23 @@ func (s *Server) handleIndexers(w http.ResponseWriter, r *http.Request) {
 	// Background async refresh (don't block page load)
 	go s.refreshJackettCache()
 
-	// Add Jackett-activated indexers to active list (show both, label conflict)
+	// Build the activated list from Jackett's configured indexers.
 	s.jackettActiveMu.Lock()
 	s.loadJackettEnabled()
 	for _, jk := range data.JackettLibrary {
-		if s.jackettActive[jk.ID] {
-			name := jk.Name
-			// If same ID already in local list, append source label
-			for _, loc := range data.IndexerList {
-				if loc.ID == jk.ID {
-					name = jk.Name + " (Jackett)"
-					break
-				}
-			}
-			data.IndexerList = append(data.IndexerList, indexer.IndexerInfo{
-				ID:       jk.ID,
-				Name:     name,
-				Type:     jk.Type,
-				Language: jk.Language,
-				SiteLink: jk.SiteLink,
-				Enabled:  true,
-				Healthy:  true,
-				Source:   "jackett",
-			})
+		if !s.jackettActive[jk.ID] {
+			continue
 		}
+		data.IndexerList = append(data.IndexerList, indexer.IndexerInfo{
+			ID:       jk.ID,
+			Name:     jk.Name,
+			Type:     jk.Type,
+			Language: jk.Language,
+			SiteLink: jk.SiteLink,
+			Enabled:  true,
+			Healthy:  true,
+			Source:   "jackett",
+		})
 	}
 	s.jackettActiveMu.Unlock()
 	dashboardTemplate.Execute(w, data)
@@ -4084,129 +3715,212 @@ func (s *Server) refreshJackettCache() []jackett.IndexerInfo {
 	return jk
 }
 
-func (s *Server) handleIndexerTest(w http.ResponseWriter, r *http.Request) {
+// ---------- Jackett discovery / install ----------
+
+// handleJackettDiscover probes the local machine for a Jackett instance and
+// returns what it found so the settings form can be pre-filled.
+//
+// The API key is deliberately not persisted here: the caller decides whether to
+// save it, so that merely opening the page never overwrites a working config.
+func (s *Server) handleJackettDiscover(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if s.IdxMgr == nil {
-		fmt.Fprint(w, `{"ok":false,"msg":"no indexer manager"}`)
-		return
+
+	d := jackett.Discover()
+	log.Printf("[jackett] discover: found=%v running=%v url=%q config=%q",
+		d.Found, d.Running, d.URL, d.ConfigPath)
+
+	resp := map[string]interface{}{
+		"ok":             true,
+		"found":          d.Found,
+		"running":        d.Running,
+		"url":            d.URL,
+		"apikey":         d.APIKey,
+		"admin_password": d.AdminPassword,
+		"port":           d.Port,
+		"config_path":    d.ConfigPath,
+		"version":        d.Version,
+		"source":         d.Source,
+		// The install directory is reported so the UI can show where Jackett
+		// would be placed before the user commits to downloading it.
+		"install_dir": jackett.InstallDir(filepath.Dir(s.settingsDataDir())),
 	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		fmt.Fprint(w, `{"ok":false,"msg":"missing id"}`)
-		return
-	}
-	err := s.IdxMgr.TestIndexer(id)
-	if err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
-		return
-	}
-	log.Printf("[indexer] test %s: ok", id)
-	fmt.Fprint(w, `{"ok":true,"msg":"ok"}`)
+	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) handleIndexerTestAll(w http.ResponseWriter, r *http.Request) {
-	if s.IdxMgr == nil {
-		http.Redirect(w, r, "/indexers", http.StatusSeeOther)
-		return
-	}
-	results := s.IdxMgr.TestAll()
-	log.Printf("[indexer] test-all completed: %d indexers", len(results))
-	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
-		return
-	}
-	http.Redirect(w, r, "/indexers", http.StatusSeeOther)
-}
-
-func (s *Server) handleIndexerLogin(w http.ResponseWriter, r *http.Request) {
+// handleJackettInstall downloads and extracts Jackett, then optionally starts it.
+//
+// The download is large (roughly 50 MB) so the operation runs synchronously but
+// reports its progress trail in the response; the UI shows a spinner meanwhile.
+func (s *Server) handleJackettInstall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if s.IdxMgr == nil {
-		fmt.Fprint(w, `{"ok":false,"msg":"no indexer manager"}`)
-		return
-	}
 	if r.Method != http.MethodPost {
-		fmt.Fprint(w, `{"ok":false,"msg":"POST required"}`)
+		writeJSON(w, false, "POST required")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+		writeJSON(w, false, err.Error())
 		return
 	}
-	id := r.FormValue("id")
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-	if id == "" || username == "" || password == "" {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, tr(s.langFromAgent(), "err_id_username_password"))
+	force := r.FormValue("force") == "1"
+	startAfter := r.FormValue("start") != "0" // default: start it
+
+	dir := jackett.InstallDir(filepath.Dir(s.settingsDataDir()))
+	log.Printf("[jackett] install requested: dir=%s force=%v start=%v", dir, force, startAfter)
+
+	res, err := jackett.Install(r.Context(), dir, force, log.Printf)
+	if err != nil {
+		log.Printf("[jackett] install failed: %v", err)
+		writeJSON(w, false, err.Error())
 		return
 	}
-	if err := s.IdxMgr.Login(id, username, password); err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
-		return
+
+	// Adopt the freshly installed instance's settings automatically.
+	url := s.JackettURL
+	apiKey := s.JackettAPIKey
+	adminPassword := s.JackettAdminPassword
+	if d := jackett.Discover(); d.Found {
+		if d.URL != "" {
+			url = d.URL
+		}
+		if d.APIKey != "" {
+			apiKey = d.APIKey
+		}
+		if d.AdminPassword != "" {
+			adminPassword = d.AdminPassword
+		}
 	}
-	log.Printf("[indexer] login %s: ok", id)
-	fmt.Fprintf(w, `{"ok":true,"msg":"%s"}`, tr(s.langFromAgent(), "login_success"))
+	if url == "" {
+		url = fmt.Sprintf("http://127.0.0.1:%d", jackett.DefaultPort)
+	}
+
+	if startAfter {
+		if err := jackett.Start(r.Context(), dir, url, log.Printf); err != nil {
+			// The install itself succeeded, so report the start failure but keep
+			// the discovered settings so the user can retry manually.
+			s.applyJackettSettings(url, apiKey, adminPassword)
+			writeJSON(w, false, "安装完成，但启动失败: "+err.Error())
+			return
+		}
+		res.Started = true
+	}
+
+	s.applyJackettSettings(url, apiKey, adminPassword)
+	go s.refreshJackettCache()
+
+	log.Printf("[jackett] install complete: %s (started=%v)", res.Dir, res.Started)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":         true,
+		"msg":        "Jackett 安装完成",
+		"url":        url,
+		"apikey":     apiKey,
+		"started":    res.Started,
+		"version":    res.Version,
+		"dir":        res.Dir,
+		"log":        res.Log,
+	})
 }
 
-func (s *Server) handleIndexerEdit(w http.ResponseWriter, r *http.Request) {
+// handleJackettStart launches an already-installed Jackett instance.
+func (s *Server) handleJackettStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if s.IdxMgr == nil {
-		fmt.Fprint(w, `{"ok":false,"msg":"no indexer manager"}`)
-		return
-	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		fmt.Fprint(w, `{"ok":false,"msg":"missing id"}`)
-		return
-	}
-	if r.Method == http.MethodGet {
-		// Return raw YAML
-		yaml, err := s.IdxMgr.GetDefinitionYAML(id)
-		if err != nil {
-			fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"ok": "true", "yaml": yaml})
-		return
-	}
-	if r.Method == http.MethodPost {
-		yamlContent := r.FormValue("yaml")
-		if yamlContent == "" {
-			fmt.Fprint(w, `{"ok":false,"msg":"missing yaml content"}`)
-			return
-		}
-		if err := s.IdxMgr.UpdateDefinitionYAML(id, yamlContent); err != nil {
-			fmt.Fprintf(w, `{"ok":false,"msg":"save failed: %s"}`, err.Error())
-			return
-		}
-		log.Printf("[indexer] edit %s: definition updated (%d bytes)", id, len(yamlContent))
-		fmt.Fprint(w, `{"ok":true,"msg":"saved"}`)
-		return
-	}
-	fmt.Fprint(w, `{"ok":false,"msg":"method not allowed"}`)
-}
-
-func (s *Server) handleIndexerDelete(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if s.IdxMgr == nil {
-		fmt.Fprint(w, `{"ok":false,"msg":"no indexer manager"}`)
-		return
-	}
 	if r.Method != http.MethodPost {
-		fmt.Fprint(w, `{"ok":false,"msg":"POST required"}`)
+		writeJSON(w, false, "POST required")
 		return
 	}
-	id := r.FormValue("id")
-	if id == "" {
-		fmt.Fprint(w, `{"ok":false,"msg":"missing id"}`)
+
+	dir := jackett.InstallDir(filepath.Dir(s.settingsDataDir()))
+	url := s.JackettURL
+	if url == "" {
+		url = fmt.Sprintf("http://127.0.0.1:%d", jackett.DefaultPort)
+	}
+	log.Printf("[jackett] start requested: dir=%s url=%s", dir, url)
+
+	if err := jackett.Start(r.Context(), dir, url, log.Printf); err != nil {
+		log.Printf("[jackett] start failed: %v", err)
+		writeJSON(w, false, err.Error())
 		return
 	}
-	if err := s.IdxMgr.DeleteDefinition(id); err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+	go s.refreshJackettCache()
+	writeJSON(w, true, "Jackett 已启动")
+}
+
+// AutoDiscoverJackett probes for a local Jackett instance and adopts its
+// settings when nothing has been configured yet.
+//
+// This is what makes a fresh install work out of the box: if Jackett is already
+// running (or its config file is present) the connection details are filled in
+// automatically. Explicit user settings always win.
+func (s *Server) AutoDiscoverJackett() {
+	hadURL := strings.TrimSpace(s.JackettURL) != ""
+	hadKey := strings.TrimSpace(s.JackettAPIKey) != ""
+
+	d := jackett.Discover()
+	if !d.Found {
+		log.Printf("[jackett] no local instance detected")
 		return
 	}
-	log.Printf("[indexer] delete %s: definition removed", id)
-	fmt.Fprint(w, `{"ok":true,"msg":"deleted"}`)
+
+	url := s.JackettURL
+	apiKey := s.JackettAPIKey
+	adminPassword := s.JackettAdminPassword
+	changed := false
+
+	// Only fill in what is missing; never overwrite a working configuration.
+	if !hadURL && d.URL != "" {
+		url = d.URL
+		changed = true
+	}
+	if !hadKey && d.APIKey != "" {
+		apiKey = d.APIKey
+		changed = true
+	}
+	if strings.TrimSpace(adminPassword) == "" && d.AdminPassword != "" {
+		adminPassword = d.AdminPassword
+	}
+
+	if changed {
+		s.applyJackettSettings(url, apiKey, adminPassword)
+		log.Printf("[jackett] auto-discovered %s (running=%v, config=%s)", url, d.Running, d.ConfigPath)
+	} else {
+		log.Printf("[jackett] existing configuration kept (discovered %s)", d.URL)
+	}
+}
+
+// settingsDataDir returns the directory holding the SQLite database, which is
+// where the managed Jackett install is placed.
+//
+// The path is made absolute so the install location does not depend on the
+// process working directory, which may change or be unset under a service
+// manager.
+func (s *Server) settingsDataDir() string {
+	dbPath := ""
+	if s.Agent != nil {
+		dbPath = s.Agent.GetSettings().DatabasePath
+	}
+	if dbPath == "" {
+		dbPath = "db.sqlite"
+	}
+	abs, err := filepath.Abs(dbPath)
+	if err != nil {
+		return dbPath
+	}
+	return abs
+}
+
+// applyJackettSettings stores Jackett connection details in memory and persists
+// them to web-settings.json.
+func (s *Server) applyJackettSettings(url, apiKey, adminPassword string) {
+	s.JackettURL = strings.TrimRight(strings.TrimSpace(url), "/")
+	s.JackettAPIKey = strings.TrimSpace(apiKey)
+	s.JackettAdminPassword = strings.TrimSpace(adminPassword)
+
+	ws := s.loadWebSettings()
+	ws.JackettURL = s.JackettURL
+	ws.JackettAPIKey = s.JackettAPIKey
+	ws.JackettAdminPassword = s.JackettAdminPassword
+	s.saveWebSettings(ws)
+
+	jackett.SetProxy(s.ProxyHTTP)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

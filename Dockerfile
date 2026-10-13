@@ -19,7 +19,6 @@ ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 COPY --from=builder /build/pan-fetcher .
-COPY --from=builder /build/indexers/ ./indexers/
 
 # Default config — override via volume mount for production
 RUN echo '[server]\nport = 8115' > /app/config.toml

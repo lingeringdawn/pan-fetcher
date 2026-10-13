@@ -1538,29 +1538,27 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     <!-- indexer management -->
     {{if eq .Page "indexers"}}
 
+    <!-- Jackett connection status -->
+    <div class="card panel" id="jk-setup-panel">
+      <h2>🦜 {{index .T "jk_setup_title"}}</h2>
+      <div id="jk-setup-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+    </div>
+
     <!-- active indexers -->
-    <div class="card panel">
-      <h2>{{index .T "indexer_list"}} ({{len .IndexerList}})
-        {{if .IndexerList}}<button onclick="testAll()" style="margin:0 0 0 12px;padding:4px 12px;font-size:12px;background:var(--accent-2);">{{index .T "test_all"}}</button>{{end}}
-      </h2>
+    <div class="card panel" style="margin-top:16px;">
+      <h2>{{index .T "indexer_list"}} ({{len .IndexerList}})</h2>
       {{if .IndexerList}}
       <table class="tbl" id="idx-active">
-        <thead><tr><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "jk_id"}}</th><th>{{index .T "idx_lang"}}</th><th>{{index .T "idx_source"}}</th><th>{{index .T "idx_health"}}</th><th></th></tr></thead>
+        <thead><tr><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "jk_id"}}</th><th>{{index .T "idx_lang"}}</th><th></th></tr></thead>
         <tbody>
         {{range .IndexerList}}<tr id="row-{{.ID}}">
-          <td>{{if .SiteLink}}<a href="{{.SiteLink}}" target="_blank">{{.Name}}</a>{{else}}<strong>{{.Name}}</strong>{{end}}<br><small class="err-msg" style="color:var(--danger);">{{.LastError}}</small></td>
+          <td>{{if .SiteLink}}<a href="{{.SiteLink}}" target="_blank">{{.Name}}</a>{{else}}<strong>{{.Name}}</strong>{{end}}</td>
           <td class="muted">{{.Type}}</td>
           <td class="muted" style="font-size:11px;">{{.ID}}</td>
           <td class="muted">{{.Language}}</td>
-          <td><span style="font-size:10px;padding:1px 5px;border-radius:4px;color:#fff;{{if eq .Source "jackett"}}background:var(--accent-2);{{else}}background:var(--muted);{{end}}">{{if eq .Source "jackett"}}Jackett{{else}}{{index $.T "local"}}{{end}}</span></td>
-          <td><span class="health-dot" style="color:{{if .Healthy}}var(--accent-2){{else}}var(--danger){{end}};" title="{{if .LastTest}}{{.LastTest}}{{end}}">●</span></td>
           <td style="white-space:nowrap;">
-            {{if eq .Source "jackett"}}
-            <button onclick="jkDeactivate('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="{{index $.T "remove"}}">−</button>
-            {{else}}
-            {{if .HasLogin}}<button onclick="showLogin('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--warn);">🔑</button>{{end}}
-            <button onclick="deactivateIdx('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="{{index $.T "remove_lib"}}">−</button>
-            {{end}}
+            <button onclick="jkDeactivate('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="{{index .T "remove"}}">−</button>
+          </td>
         </tr>{{end}}
         </tbody>
       </table>
@@ -1569,47 +1567,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       {{end}}
     </div>
 
-    <!-- local library -->
-    <div class="card panel" style="margin-top:16px;">
-      <h2>{{index .T "idx_lib_local"}} (<span id="lib-count">{{len .IndexerLibrary}}</span>)
-        <button onclick="newIdx()" style="margin:0 0 0 12px;padding:4px 12px;font-size:12px;background:var(--accent-2);">+ 添加库</button>
-        <button onclick="activateSelected()" style="margin:0 0 0 8px;padding:4px 12px;font-size:12px;background:var(--accent);">{{index .T "idx_batch_add"}}</button>
-      </h2>
-      {{if .IndexerLibrary}}
-      <table class="tbl" id="idx-library">
-        <thead><tr><th></th><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "jk_id"}}</th><th>{{index .T "idx_lang"}}</th><th></th></tr></thead>
-        <tbody>
-        {{range .IndexerLibrary}}
-          <tr id="lib-{{.ID}}"{{if .Enabled}} style="opacity:0.6"{{end}}>
-            <td>{{if not .Enabled}}<input type="checkbox" name="ids" value="{{.ID}}" style="width:auto;margin:0;">{{end}}</td>
-            <td>{{if .SiteLink}}<a href="{{.SiteLink}}" target="_blank">{{.Name}}</a>{{else}}<strong>{{.Name}}</strong>{{end}}</td>
-            <td class="muted">{{.Type}}</td>
-            <td class="muted" style="font-size:11px;">{{.ID}}</td>
-            <td class="muted">{{.Language}}</td>
-            <td style="white-space:nowrap;">
-              {{if .Enabled}}
-              <span style="font-size:11px;color:var(--accent-2);">已激活</span>
-              {{else}}
-              <button onclick="activateSingle('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--accent);" title="激活">+</button>
-              {{end}}
-              <button onclick="editIdx('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;">✎</button>
-              <button onclick="deleteIdx('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="删除定义">✕</button>
-            </td>
-          </tr>
-        {{end}}
-        </tbody>
-      </table>
-      {{else}}
-      <div class="hint">{{index .T "idx_lib_empty"}}</div>
-      {{end}}
-    </div>
-
     <!-- jackett library (loaded async) -->
     <div class="card panel" style="margin-top:16px;">
       <h2>{{index .T "idx_lib_jackett"}} (<span id="jk-count">…</span>) 
         <span id="jk-batch-btn"></span>
         <button onclick="showJKAddModal()" id="jk-add-btn" style="margin:0 0 0 8px;padding:4px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_add_lib"}}</button>
-        {{if not .JackettURL}}<a href="/settings" style="font-size:12px;margin-left:8px;color:var(--accent);">⚙ {{index .T "jk_lib_config"}}</a>{{end}}
       </h2>
       <div id="jk-content"><span class="hint">⏳ {{index .T "loading"}}</span></div>
     </div>
@@ -1627,140 +1589,86 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         try{return await r.json();}catch(e){return {};}
       }
 
-      async function testIdx(id,name){
-        let dot=document.querySelector('#row-'+id+' .health-dot');
-        let errEl=document.querySelector('#row-'+id+' .err-msg');
-        dot.textContent='…';dot.style.color='var(--warn)';
-        try{
-          let r=await fetch('/indexers/test?id='+encodeURIComponent(id));
-          let j=await r.json();
-          if(j.ok){dot.textContent='●';dot.style.color='var(--accent-2)';errEl.textContent='';}
-          else{dot.textContent='●';dot.style.color='var(--danger)';errEl.textContent=j.msg;}
-          dot.title=new Date().toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-        }catch(e){dot.textContent='●';dot.style.color='var(--danger)';errEl.textContent=e.message;}
+      // ---- Jackett setup panel (discovery / install) ----
+      var jkSetupState={configured:{{if .JackettURL}}true{{else}}false{{end}}};
+
+      function renderJKSetup(info){
+        var el=document.getElementById('jk-setup-body');
+        if(!el) return;
+        var h='';
+        if(jkSetupState.configured){
+          h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+          h+='<span style="font-size:13px;color:var(--accent-2);font-weight:600;">● {{index .T "jk_connected"}}</span>';
+          h+='<code style="font-size:12px;background:var(--bg);padding:2px 8px;border-radius:6px;">'+ (info&&info.url ? info.url : '{{.JackettURL}}') +'</code>';
+          if(info&&info.version){h+='<span class="muted" style="font-size:12px;">v'+info.version+'</span>';}
+          h+='<button type="button" onclick="jkDiscover()" style="margin:0;padding:4px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_redetect"}}</button>';
+          h+='<a href="/settings" style="font-size:12px;color:var(--accent);">{{index .T "jk_edit_manual"}}</a>';
+          h+='</div>';
+        } else {
+          h+='<div class="hint" style="margin-bottom:10px;">{{index .T "jk_not_configured_hint"}}</div>';
+          h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+          h+='<button type="button" id="jk-detect-btn" onclick="jkDiscover()" style="margin:0;padding:6px 14px;font-size:13px;background:var(--accent-2);">{{index .T "jk_detect_btn"}}</button>';
+          h+='<button type="button" id="jk-install-btn" onclick="jkInstall()" style="margin:0;padding:6px 14px;font-size:13px;background:var(--accent);">{{index .T "jk_install_btn"}}</button>';
+          h+='<a href="/settings" style="font-size:12px;color:var(--accent);">{{index .T "jk_manual_link"}}</a>';
+          h+='</div>';
+        }
+        h+='<div id="jk-setup-result" style="margin-top:10px;font-size:12px;"></div>';
+        el.innerHTML=h;
       }
 
-      async function testAll(){
-        let r=await fetch('/indexers/testall',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}});
-        let j=await r.json();
-        var now=new Date().toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-        for(let id in j){
-          let dot=document.querySelector('#row-'+id+' .health-dot');
-          let errEl=document.querySelector('#row-'+id+' .err-msg');
-          if(dot){
-            if(j[id]==='ok'){dot.style.color='var(--accent-2)';if(errEl)errEl.textContent='';}
-            else{dot.style.color='var(--danger)';if(errEl)errEl.textContent=j[id];}
-            dot.title=now;
+      function jkSetupMsg(text,isErr){
+        var el=document.getElementById('jk-setup-result');
+        if(el) el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+text+'</span>';
+      }
+
+      async function jkDiscover(){
+        jkSetupMsg('{{index .T "jk_detecting"}}',false);
+        try{
+          var r=await fetch('/indexers/jackett/discover');
+          var j=await r.json();
+          if(!j.ok){jkSetupMsg(j.msg||'failed',true);return;}
+          if(!j.found){
+            jkSetupMsg('{{index .T "jk_not_found"}}',true);
+            return;
           }
+          // Persist only the values actually discovered, so an empty result can
+          // never blank out a working configuration.
+          var fd=new URLSearchParams();
+          if(j.url) fd.set('jackett_url',j.url);
+          if(j.apikey) fd.set('jackett_apikey',j.apikey);
+          if(j.admin_password) fd.set('jackett_admin_password',j.admin_password);
+          if([...fd.keys()].length){
+            await fetch('/settings',{method:'POST',body:fd,headers:{'X-Requested-With':'XMLHttpRequest'}}).catch(function(){});
+          }
+          var msg='{{index .T "jk_found"}}: '+(j.url||'')+(j.running?'':' ({{index .T "jk_not_running"}})');
+          jkSetupMsg(msg,false);
+          jkSetupState.configured=!!(j.url&&j.apikey);
+          setTimeout(function(){location.reload();},900);
+        }catch(e){jkSetupMsg(e.message,true);}
+      }
+
+      async function jkInstall(){
+        if(!(await confirmAsync('{{index .T "jk_install_confirm"}}'))) return;
+        var btn=document.getElementById('jk-install-btn');
+        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_installing"}}';}
+        jkSetupMsg('{{index .T "jk_installing_hint"}}',false);
+        try{
+          var r=await fetch('/indexers/jackett/install',{method:'POST',body:new URLSearchParams({start:'1'})});
+          var j=await r.json();
+          if(j.ok){
+            jkSetupMsg('{{index .T "jk_install_ok"}}: '+(j.url||''),false);
+            jkSetupState.configured=true;
+            setTimeout(function(){location.reload();},1500);
+          } else {
+            jkSetupMsg(j.msg||'failed',true);
+            if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
+          }
+        }catch(e){
+          jkSetupMsg(e.message,true);
+          if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
         }
       }
 
-      async function deactivateIdx(id){
-        var row=document.getElementById('row-'+id);
-        if(row) row.style.display='none';
-        await apiPost('deactivate',{id});
-        location.reload();
-      }
-
-      async function showLogin(id,name){
-        var body='<div><label>{{index .T "username_label"}}</label><input id="login-user" style="width:100%;"></div>';
-        body+='<div style="margin-top:8px;"><label>{{index .T "password_label"}}</label><input id="login-pass" type="password" style="width:100%;"></div>';
-        showModal('{{index .T "login_label"}} - '+name, body, [
-          {text:'{{index .T "cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
-          {text:'{{index .T "login_label"}}',cls:'var(--accent-2)',cb:async function(){
-            var u=document.getElementById('login-user').value;
-            var p=document.getElementById('login-pass').value;
-            if(!u||!p){showModal('{{index .T "error_label"}}','<p>{{index .T "credentials_required"}}</p>');return;}
-            closeModal();
-            try{
-              let r=await fetch('/indexers/login',{
-                method:'POST',
-                body:new URLSearchParams({action:'login',id,username:u,password:p}),
-                headers:{'X-Requested-With':'XMLHttpRequest'}
-              });
-              let j=await r.json();
-              if(j.ok){showModal('{{index .T "success_label"}}','<p>{{index .T "login_success_msg"}}</p>');testIdx(id,name);}
-              else{showModal('{{index .T "failed"}}','<p>'+j.msg+'</p>');}
-            }catch(e){showModal('{{index .T "error_label"}}','<p>'+e.message+'</p>');}
-          }}
-        ]);
-      }
-
-      async function activateSelected(){
-        let checks=document.querySelectorAll('#idx-library input[type="checkbox"]:checked');
-        if(checks.length===0) return;
-        checks.forEach(function(c){var row=document.getElementById('lib-'+c.value);if(row)row.style.opacity='0.4';});
-        let ids=[];
-        checks.forEach(c=>ids.push(c.value));
-        await apiPost('activate_batch',{ids:ids});
-        location.reload();
-      }
-
-      async function editIdx(id,name){
-        try{
-          var r=await fetch('/indexers/edit?id='+encodeURIComponent(id));
-          var j=await r.json();
-          if(!j.ok){alertModal(j.msg);return;}
-          showModal('{{index .T "edit_label"}}: '+name,
-            '<textarea id="edit-yaml" style="width:100%;height:400px;font-family:monospace;font-size:12px;">'+
-            j.yaml.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</textarea>',
-            [
-              {text:'{{index .T "cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
-              {text:'{{index .T "save"}}',cls:'var(--accent-2)',cb:async function(){
-                var y=document.getElementById('edit-yaml').value;
-                var r2=await fetch('/indexers/edit?id='+encodeURIComponent(id),
-                  {method:'POST',body:new URLSearchParams({yaml:y}),
-                   headers:{'X-Requested-With':'XMLHttpRequest'}});
-                var j2=await r2.json();
-                if(j2.ok){closeModal();location.reload();}
-                else{alertModal('{{index .T "save"}} failed: '+j2.msg);}
-              }}
-            ]
-          );
-        }catch(e){alertModal(e.message);}
-      }
-
-      async function activateSingle(id){
-        var row=document.getElementById('lib-'+id);
-        if(row) row.style.opacity='0.4';
-        await apiPost('activate',{id});
-        location.reload();
-      }
-
-      async function deleteIdx(id,name){
-        if(!(await confirmAsync('Delete "'+name+'"? This removes the YAML file permanently.'))) return;
-        try{
-          var r=await fetch('/indexers/delete',{method:'POST',body:new URLSearchParams({id:id}),headers:{'X-Requested-With':'XMLHttpRequest'}});
-          var j=await r.json();
-          if(j.ok){var row=document.getElementById('lib-'+id);if(row)row.style.display='none';}
-          else{alertModal(j.msg);}
-        }catch(e){alertModal(e.message);}
-      }
-
-      function newIdx(){
-        showModal('{{index .T "new_idx"}}',
-          '<label>ID:</label><input id="new-id" style="width:100%;" placeholder="e.g. mysite">',
-          [
-            {text:'{{index .T "cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
-            {text:'{{index .T "create"}}',cls:'var(--accent-2)',cb:async function(){
-              var id=document.getElementById('new-id').value.trim();
-              if(!id){alertModal('Please enter an ID');return;}
-              var tmpl='---\nid: '+id+'\nname: My Site\ntype: public\nlanguage: zh-CN\nlinks:\n  - https://\n\ncaps:\n  categories:\n    1: Other\n  modes:\n    search: [q]\n\nsearch:\n  paths:\n    - path: /search\n  inputs:\n    q: "___KEYWORDS___"\n  rows:\n    selector: table tr\n  fields:\n    title:\n      selector: a\n    details:\n      selector: a\n      attribute: href\n    download:\n      selector: a[href*=magnet]\n      attribute: href\n    size:\n      selector: .size\n    date:\n      selector: .date\n    seeders:\n      selector: .seeders\n';
-              closeModal();
-              showModal('{{index .T "new_idx"}}: '+id,'<textarea id="new-yaml" style="width:100%;height:400px;font-family:monospace;font-size:12px;">'+tmpl.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</textarea>',[
-                {text:'{{index .T "cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
-                {text:'{{index .T "save"}}',cls:'var(--accent-2)',cb:async function(){
-                  var y=document.getElementById('new-yaml').value;
-                  var r=await fetch('/indexers/edit?id='+encodeURIComponent(id),{method:'POST',body:new URLSearchParams({yaml:y}),headers:{'X-Requested-With':'XMLHttpRequest'}});
-                  var j=await r.json();
-                  if(j.ok){closeModal();location.reload();}
-                  else{alertModal('Failed: '+j.msg);}
-                }}
-              ]);
-            }}
-          ]
-        );
-      }
       // Load Jackett indexers async
       async function loadJackettLib(){
         var ct=document.getElementById('jk-content');
@@ -1885,6 +1793,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         }
         location.reload();
       }
+      renderJKSetup(null);
       loadJackettLib();
     </script>
     {{end}}

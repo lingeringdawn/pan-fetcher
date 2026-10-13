@@ -24,13 +24,13 @@
 
 ### 🔍 聚合搜索
 
-内置多个 BT 索引器，Cardigann YAML 兼容可自行扩展。标签筛选、关键词过滤、分页浏览。搜索结果自动去重。
+基于 Jackett / Prowlarr 的数百个索引器。标签筛选、关键词过滤、分页浏览，搜索结果自动去重。
 
 <p align="center"><img src=".github/images/1738.jpg" alt="资源搜索" width="70%"></p>
 
 ### 📡 Jackett / Prowlarr 集成
 
-自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。
+自动检测本机 Jackett 并读取其配置（含 API Key），无需手工填写；检测不到时可一键下载安装并启动。自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。也支持手动输入地址与 API Key 连接远程实例。
 
 <p align="center"><img src=".github/images/1741.jpg" alt="索引器" width="70%"></p>
 
@@ -163,7 +163,7 @@ http = "http://127.0.0.1:7890"         # HTTP 代理（访问 Jackett 等）
 
 ## 🛠️ 技术栈
 
-Go 1.25 · SQLite · 单体 `html/template`（零前端依赖） · [elevengo](https://github.com/Nahuimi/elevengo) 115 API · Cardigann YAML 索引引擎 · Torznab API
+Go 1.25 · SQLite · 单体 `html/template`（零前端依赖） · [elevengo](https://github.com/Nahuimi/elevengo) 115 API · Torznab API
 
 ## 🙏 致谢
 
@@ -182,8 +182,8 @@ Automated media downloader for 115 cloud storage. Search across BT indexers, dis
 ### Features
 
 - **🎬 TMDB Discover** — Search movies & TV shows, view full details (poster, overview, rating, genres), one-click jump to aggregated search.
-- **🔍 Aggregated Search** — Built-in indexers + Jackett/Prowlarr for hundreds more. Tag filter, keyword filter, pagination, auto-dedup.
-- **📡 Jackett/Prowlarr** — Auto-discover, batch activate, connection test, source labels.
+- **🔍 Aggregated Search** — Hundreds of indexers via Jackett/Prowlarr. Tag filter, keyword filter, pagination, auto-dedup.
+- **📡 Jackett/Prowlarr** — Auto-detect a local instance and read its API key; one-click download & install when absent; batch activate, connection test, source labels.
 - **📋 RSS Subscriptions** — Scheduled fetch, smart dedup, keyword filter, cache management.
 - **📥 Offline Download** — Magnet/ed2k/http batch submit with status tabs.
 - **📂 File Manager** — Browse and manage 115 cloud files (mkdir, rename, move, copy, delete).
@@ -260,7 +260,7 @@ http = "http://127.0.0.1:7890"
 
 ### Tech Stack
 
-Go 1.25 · SQLite · single `html/template` (zero frontend deps) · [elevengo](https://github.com/Nahuimi/elevengo) · Cardigann YAML · Torznab API
+Go 1.25 · SQLite · single `html/template` (zero frontend deps) · [elevengo](https://github.com/Nahuimi/elevengo) · Torznab API
 
 ### Credits
 

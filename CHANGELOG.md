@@ -1,4 +1,18 @@
-﻿# Changelog
+# Changelog
+
+## Unreleased
+
+### 变更
+- **搜索后端统一为 Jackett**：移除内置 Cardigann YAML 索引引擎（`indexer/` 引擎、`indexers/` 定义目录、内置索引器自动安装）。所有搜索、RSS 聚合、订阅推送均通过 Jackett 的 Torznab API 完成，索引器定义的维护交由 Jackett。
+- 移除索引器页的「本地库」区域及相关接口（`/indexers/test`、`/indexers/testall`、`/indexers/login`、`/indexers/edit`、`/indexers/delete`）。
+
+### 新增
+- **Jackett 自动检测**：启动时及索引器页面均可探测本机 Jackett。按平台读取 `ServerConfig.json`（Windows `%ProgramData%\Jackett`、Linux `~/.config/Jackett`、macOS `~/Library/Application Support/Jackett`、Docker `/config/Jackett`），自动填充地址、API Key 与管理密码。已配置时不会被覆盖，也可用 `JACKETT_URL` / `JACKETT_APIKEY` 环境变量显式指定。
+- **一键安装 Jackett**：检测不到本机实例时，可从索引器页面直接下载对应平台的 Jackett 发行包（Windows zip、Linux glibc/musl、macOS），解压到数据目录的 `jackett/` 子目录并启动，随后自动接管其配置。支持 `JACKETT_MUSL=1` 选择 musl 构建。
+- 解压过程对归档路径做穿越校验，含 `../` 或绝对路径的条目会直接判为非法并中止安装。
+
+### 修复
+- 设置页改为「提交哪些字段就只改哪些字段」：此前一次部分提交（如自动检测只回填 URL）会把未提交的 Jackett API Key、TMDB Key 等一并清空。
 
 ## v0.3.1 (2026-07)
 
