@@ -72,36 +72,30 @@
 
 ### ⚙️ 部署友好
 
-Docker 一键部署、Linux systemd 安装脚本、多平台预编译二进制、Web 界面配置。
+Docker 一键部署、Linux systemd 安装脚本、Linux 预编译二进制（amd64 / arm64）、Web 界面配置。
 
 <p align="center"><img src=".github/images/1755.jpg" alt="设置" width="70%"></p>
 
 
 ## 🚀 快速开始
 
-### Docker
+> **仅支持 Linux。** pan-fetcher 依赖 Linux 的进程与文件语义（自更新、子进程分离、Jackett 安装），不支持 Windows / macOS。
 
-**Linux / macOS**
+### Docker
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/docker-setup.sh | bash
-```
-
-**Windows PowerShell**
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/docker-setup.ps1 | iex
 ```
 
 浏览器打开 `http://localhost:8115`，进入设置页完成配置。也提供 [GHCR 镜像](https://github.com/lingeringdawn/pan-fetcher/pkgs/container/pan-fetcher)。
 
 ### 预编译二进制
 
-从 [Releases](https://github.com/lingeringdawn/pan-fetcher/releases) 下载对应平台文件，解压即可运行。
+从 [Releases](https://github.com/lingeringdawn/pan-fetcher/releases) 下载对应架构文件，解压即可运行。
 
-| Linux amd64 | Linux arm64 | macOS amd64 | macOS arm64 | Windows amd64 |
-|:--:|:--:|:--:|:--:|:--:|
-| `tar.gz` | `tar.gz` | `tar.gz` | `tar.gz` | `zip` |
+| Linux amd64 | Linux arm64 |
+|:--:|:--:|
+| `tar.gz` | `tar.gz` |
 
 ### Linux 一键脚本
 
@@ -195,25 +189,23 @@ Automated media downloader for 115 cloud storage. Search across BT indexers, dis
 
 ### Quick Start
 
+> **Linux only.** pan-fetcher relies on Linux process and filesystem semantics
+> (in-place self-update, detached child processes, Jackett install); Windows and
+> macOS are not supported.
+
 **Docker:**
 
-Linux / macOS:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/docker-setup.sh | bash
-```
-
-Windows PowerShell:
-```powershell
-iwr -useb https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/scripts/docker-setup.ps1 | iex
 ```
 
 Also available on [GHCR](https://github.com/lingeringdawn/pan-fetcher/pkgs/container/pan-fetcher).
 
 **Prebuilt binaries:** [GitHub Releases](https://github.com/lingeringdawn/pan-fetcher/releases)
 
-| Linux amd64 | Linux arm64 | macOS amd64 | macOS arm64 | Windows amd64 |
-|:--:|:--:|:--:|:--:|:--:|
-| `tar.gz` | `tar.gz` | `tar.gz` | `tar.gz` | `zip` |
+| Linux amd64 | Linux arm64 |
+|:--:|:--:|
+| `tar.gz` | `tar.gz` |
 
 **Linux one-liner:** `curl -fsSL https://.../install-release.sh | sudo bash`
 

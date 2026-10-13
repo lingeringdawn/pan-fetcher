@@ -2,8 +2,6 @@ package server
 
 import (
 	"archive/tar"
-	"archive/zip"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -2812,8 +2810,9 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		}
 		cmd := exec.Command(exe, args...)
 		cmd.Dir = filepath.Dir(exe)
-		// Detach from parent so it survives after we exit
-		prepareRestartCmd(cmd)
+		// Detach from the parent session so the replacement process survives our
+		// exit and is not tied to this process's controlling terminal.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
 		cmd.Stdin = nil
 		cmd.Stdout = nil
 		cmd.Stderr = nil
@@ -2875,13 +2874,9 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	lang := s.langFromAgent()
 	w.Header().Set("Content-Type", "application/json")
 
-	// Determine platform
-	goos := runtime.GOOS
+	// pan-fetcher is Linux-only, so the release asset is unambiguous.
+	const binaryName = "pan-fetcher"
 	goarch := runtime.GOARCH
-	binaryName := "pan-fetcher"
-	if goos == "windows" {
-		binaryName = "pan-fetcher.exe"
-	}
 
 	// Get latest release info
 	resp, err := s.httpClient().Get("https://api.github.com/repos/lingeringdawn/pan-fetcher/releases/latest")
@@ -2908,19 +2903,17 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find matching asset (tar.gz for unix, zip for windows)
-	pattern := fmt.Sprintf("%s-%s", goos, goarch)
+	// Find the Linux asset for this architecture (tar.gz).
+	pattern := fmt.Sprintf("linux-%s", goarch)
 	var downloadURL string
-	var isZip bool
 	for _, a := range release.Assets {
 		if strings.Contains(a.Name, pattern) && !strings.Contains(a.Name, "checksum") {
 			downloadURL = a.URL
-			isZip = strings.HasSuffix(a.Name, ".zip")
 			break
 		}
 	}
 	if downloadURL == "" {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": trf(lang, "update_no_asset", goos+"/"+goarch)})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": trf(lang, "update_no_asset", "linux/"+goarch)})
 		return
 	}
 
@@ -2932,13 +2925,8 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dlResp.Body.Close()
 
-	// Extract binary from archive
-	var binaryData []byte
-	if isZip {
-		binaryData, err = extractFromZip(dlResp.Body, binaryName)
-	} else {
-		binaryData, err = extractFromTarGz(dlResp.Body, binaryName)
-	}
+	// Extract the binary from the tar.gz archive.
+	binaryData, err := extractFromTarGz(dlResp.Body, binaryName)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": tr(lang, "update_download_failed") + ": " + err.Error()})
 		return
@@ -2957,20 +2945,16 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Replace running binary (platform-specific)
-	restart, err := selfReplace(tmpPath, exe)
-	if err != nil {
+	// Replace the running binary. On Linux the running executable may be renamed
+	// over, so this succeeds in place and we then restart ourselves.
+	if err := os.Rename(tmpPath, exe); err != nil {
 		os.Remove(tmpPath)
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": tr(lang, "update_install_failed") + ": " + err.Error()})
 		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": tr(lang, "update_ok")})
-	if restart {
-		go func() { time.Sleep(500 * time.Millisecond); doRestart() }()
-	} else {
-		go func() { time.Sleep(500 * time.Millisecond); os.Exit(0) }()
-	}
+	go func() { time.Sleep(500 * time.Millisecond); doRestart() }()
 }
 
 // copyFile copies a file from src to dst, preserving permissions.
@@ -3014,29 +2998,6 @@ func extractFromTarGz(r io.Reader, name string) ([]byte, error) {
 		}
 		if hdr.Name == name || filepath.Base(hdr.Name) == name {
 			return io.ReadAll(tr)
-		}
-	}
-	return nil, fmt.Errorf("binary %q not found in archive", name)
-}
-
-// extractFromZip extracts a named file from a ZIP stream.
-func extractFromZip(r io.Reader, name string) ([]byte, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("read zip: %w", err)
-	}
-	zipReader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, fmt.Errorf("zip: %w", err)
-	}
-	for _, f := range zipReader.File {
-		if f.Name == name || filepath.Base(f.Name) == name {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, fmt.Errorf("zip open: %w", err)
-			}
-			defer rc.Close()
-			return io.ReadAll(rc)
 		}
 	}
 	return nil, fmt.Errorf("binary %q not found in archive", name)
@@ -3092,7 +3053,8 @@ func doRestart() {
 	}
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = filepath.Dir(exe)
-	prepareRestartCmd(cmd)
+	// Detach from the parent session so the replacement process survives our exit.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -3742,7 +3704,7 @@ func (s *Server) handleJackettDiscover(w http.ResponseWriter, r *http.Request) {
 		"source":         d.Source,
 		// The install directory is reported so the UI can show where Jackett
 		// would be placed before the user commits to downloading it.
-		"install_dir": jackett.InstallDir(filepath.Dir(s.settingsDataDir())),
+		"install_dir": s.jackettInstallDir(),
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -3764,7 +3726,7 @@ func (s *Server) handleJackettInstall(w http.ResponseWriter, r *http.Request) {
 	force := r.FormValue("force") == "1"
 	startAfter := r.FormValue("start") != "0" // default: start it
 
-	dir := jackett.InstallDir(filepath.Dir(s.settingsDataDir()))
+	dir := s.jackettInstallDir()
 	log.Printf("[jackett] install requested: dir=%s force=%v start=%v", dir, force, startAfter)
 
 	res, err := jackett.Install(r.Context(), dir, force, log.Printf)
@@ -3794,14 +3756,29 @@ func (s *Server) handleJackettInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if startAfter {
-		if err := jackett.Start(r.Context(), dir, url, log.Printf); err != nil {
+		// Start reports the endpoint that actually answered, which may differ
+		// from the requested one: Jackett reads its port from an OS-level data
+		// folder rather than from the install directory.
+		actualURL, err := jackett.Start(r.Context(), dir, url, log.Printf)
+		if err != nil {
 			// The install itself succeeded, so report the start failure but keep
 			// the discovered settings so the user can retry manually.
 			s.applyJackettSettings(url, apiKey, adminPassword)
 			writeJSON(w, false, "安装完成，但启动失败: "+err.Error())
 			return
 		}
+		url = actualURL
 		res.Started = true
+		// Re-read the config now that Jackett has initialised its data folder;
+		// this is when a freshly generated API key becomes available.
+		if d := jackett.Discover(); d.Found {
+			if d.APIKey != "" {
+				apiKey = d.APIKey
+			}
+			if d.AdminPassword != "" {
+				adminPassword = d.AdminPassword
+			}
+		}
 	}
 
 	s.applyJackettSettings(url, apiKey, adminPassword)
@@ -3828,17 +3805,34 @@ func (s *Server) handleJackettStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := jackett.InstallDir(filepath.Dir(s.settingsDataDir()))
+	dir := s.jackettInstallDir()
 	url := s.JackettURL
 	if url == "" {
 		url = fmt.Sprintf("http://127.0.0.1:%d", jackett.DefaultPort)
 	}
 	log.Printf("[jackett] start requested: dir=%s url=%s", dir, url)
 
-	if err := jackett.Start(r.Context(), dir, url, log.Printf); err != nil {
+	actualURL, err := jackett.Start(r.Context(), dir, url, log.Printf)
+	if err != nil {
 		log.Printf("[jackett] start failed: %v", err)
 		writeJSON(w, false, err.Error())
 		return
+	}
+	// Adopt the endpoint that actually answered; Jackett's effective port comes
+	// from its OS-level data folder, not from our install directory.
+	if actualURL != url {
+		log.Printf("[jackett] started on %s (requested %s), adopting", actualURL, url)
+		apiKey := s.JackettAPIKey
+		adminPassword := s.JackettAdminPassword
+		if d := jackett.Discover(); d.Found {
+			if d.APIKey != "" {
+				apiKey = d.APIKey
+			}
+			if d.AdminPassword != "" {
+				adminPassword = d.AdminPassword
+			}
+		}
+		s.applyJackettSettings(actualURL, apiKey, adminPassword)
 	}
 	go s.refreshJackettCache()
 	writeJSON(w, true, "Jackett 已启动")
@@ -3886,13 +3880,12 @@ func (s *Server) AutoDiscoverJackett() {
 	}
 }
 
-// settingsDataDir returns the directory holding the SQLite database, which is
-// where the managed Jackett install is placed.
+// databasePathAbs returns the absolute path of the SQLite database file.
 //
-// The path is made absolute so the install location does not depend on the
-// process working directory, which may change or be unset under a service
-// manager.
-func (s *Server) settingsDataDir() string {
+// It is made absolute so that derived locations (such as the managed Jackett
+// install) do not depend on the process working directory, which may change or
+// be unset under a service manager.
+func (s *Server) databasePathAbs() string {
 	dbPath := ""
 	if s.Agent != nil {
 		dbPath = s.Agent.GetSettings().DatabasePath
@@ -3905,6 +3898,12 @@ func (s *Server) settingsDataDir() string {
 		return dbPath
 	}
 	return abs
+}
+
+// jackettInstallDir is where a Jackett instance installed by pan-fetcher lives:
+// a "jackett" folder beside the database, so a single data volume carries both.
+func (s *Server) jackettInstallDir() string {
+	return jackett.InstallDir(filepath.Dir(s.databasePathAbs()))
 }
 
 // applyJackettSettings stores Jackett connection details in memory and persists

@@ -2,7 +2,6 @@ package jackett
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -50,55 +50,38 @@ func InstallDir(dataDir string) string {
 	return filepath.Join(dataDir, "jackett")
 }
 
-// assetNameForPlatform maps GOOS/GOARCH onto Jackett's release asset names.
+// assetNameForPlatform maps GOARCH onto Jackett's Linux release asset names.
 //
-// Jackett publishes a single macOS build (universal), separate glibc and musl
-// Linux builds, and one Windows zip.
-func assetNameForPlatform(goos, goarch string) (string, error) {
-	switch goos {
-	case "windows":
-		if goarch != "amd64" {
-			return "", fmt.Errorf("Windows 仅支持 amd64（当前 %s）", goarch)
+// Only Linux is supported. Jackett publishes separate glibc and musl builds per
+// architecture; musl is selected by setting JACKETT_MUSL, which matters for
+// Alpine-based containers.
+func assetNameForPlatform(goarch string) (string, error) {
+	musl := strings.TrimSpace(os.Getenv("JACKETT_MUSL")) != ""
+	switch goarch {
+	case "amd64":
+		if musl {
+			return "Jackett.Binaries.LinuxMuslAMDx64.tar.gz", nil
 		}
-		return "Jackett.Binaries.Windows.zip", nil
-	case "darwin":
-		if goarch == "arm64" {
-			return "Jackett.Binaries.macOSARM64.tar.gz", nil
+		return "Jackett.Binaries.LinuxAMDx64.tar.gz", nil
+	case "arm64":
+		if musl {
+			return "Jackett.Binaries.LinuxMuslARM64.tar.gz", nil
 		}
-		return "Jackett.Binaries.macOS.tar.gz", nil
-	case "linux":
-		// Default to the glibc build; musl can be requested explicitly.
-		musl := strings.TrimSpace(os.Getenv("JACKETT_MUSL")) != ""
-		switch goarch {
-		case "amd64":
-			if musl {
-				return "Jackett.Binaries.LinuxMuslAMDx64.tar.gz", nil
-			}
-			return "Jackett.Binaries.LinuxAMDx64.tar.gz", nil
-		case "arm64":
-			if musl {
-				return "Jackett.Binaries.LinuxMuslARM64.tar.gz", nil
-			}
-			return "Jackett.Binaries.LinuxARM64.tar.gz", nil
-		case "arm":
-			if musl {
-				return "Jackett.Binaries.LinuxMuslARM32.tar.gz", nil
-			}
-			return "Jackett.Binaries.LinuxARM32.tar.gz", nil
-		default:
-			return "", fmt.Errorf("Linux 不支持该架构: %s", goarch)
+		return "Jackett.Binaries.LinuxARM64.tar.gz", nil
+	case "arm":
+		if musl {
+			return "Jackett.Binaries.LinuxMuslARM32.tar.gz", nil
 		}
+		return "Jackett.Binaries.LinuxARM32.tar.gz", nil
 	default:
-		return "", fmt.Errorf("不支持的操作系统: %s", goos)
+		return "", fmt.Errorf("不支持的架构: %s（仅支持 amd64 / arm64 / arm）", goarch)
 	}
 }
 
-// executableName is the Jackett binary name for the current platform.
-func executableName(goos string) string {
-	if goos == "windows" {
-		return "Jackett.exe"
-	}
-	return "Jackett"
+// executableName is the Jackett launcher name inside the Linux archive. There is
+// no capitalised binary; "jackett" sits next to its managed DLLs.
+func executableName() string {
+	return "jackett"
 }
 
 // releaseAsset is the subset of the GitHub release payload that is needed.
@@ -134,7 +117,7 @@ func fetchLatestRelease(ctx context.Context, client *http.Client) (tag, url stri
 		return "", "", fmt.Errorf("解析 Jackett 版本信息失败: %w", err)
 	}
 
-	want, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	want, err := assetNameForPlatform(runtime.GOARCH)
 	if err != nil {
 		return "", "", err
 	}
@@ -164,7 +147,7 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 	ctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
 
-	exeName := executableName(runtime.GOOS)
+	exeName := executableName()
 	exePath := filepath.Join(dir, exeName)
 
 	// Reuse an existing install unless the caller asked for a refresh.
@@ -224,24 +207,14 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 	}
 	logStep("已下载 %.1f MB", float64(written)/(1024*1024))
 
-	// Extract by extension: Windows ships a zip, everything else a tar.gz.
-	lower := strings.ToLower(url)
-	switch {
-	case strings.HasSuffix(lower, ".zip"):
-		if err := extractZip(tmpPath, dir); err != nil {
-			return res, fmt.Errorf("解压 Jackett 失败: %w", err)
-		}
-	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
-		if err := extractTarGz(tmpPath, dir); err != nil {
-			return res, fmt.Errorf("解压 Jackett 失败: %w", err)
-		}
-	default:
-		return res, fmt.Errorf("未知的安装包格式: %s", url)
+	// Every Linux release is a tar.gz.
+	if err := extractTarGz(tmpPath, dir); err != nil {
+		return res, fmt.Errorf("解压 Jackett 失败: %w", err)
 	}
 	logStep("已解压到 %s", dir)
 
-	// Some archives nest everything under a single top-level directory; lift the
-	// contents up so the executable sits directly in dir.
+	// The archive nests everything under a top-level "Jackett" directory; lift
+	// the contents up so the launcher sits directly in dir.
 	if err := flattenSingleRoot(dir, exeName); err != nil {
 		return res, err
 	}
@@ -249,10 +222,8 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 	if st, err := os.Stat(exePath); err != nil || st.IsDir() {
 		return res, fmt.Errorf("解压完成但未找到可执行文件: %s", exePath)
 	}
-	// Ensure the binary is executable even if the archive lost its mode bits.
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(exePath, 0o755)
-	}
+	// Ensure the launcher is executable even if the archive lost its mode bits.
+	_ = os.Chmod(exePath, 0o755)
 
 	res.Installed = true
 	res.Executable = exePath
@@ -374,52 +345,6 @@ func extractTarGz(archivePath, dir string) error {
 	}
 }
 
-// extractZip extracts a zip archive into dir.
-func extractZip(archivePath, dir string) error {
-	zr, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-
-	for _, f := range zr.File {
-		target, err := safeJoin(dir, f.Name)
-		if err != nil {
-			return err
-		}
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		rc, err := f.Open()
-		if err != nil {
-			return err
-		}
-		mode := f.Mode().Perm()
-		if mode == 0 {
-			mode = 0o644
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-		if err != nil {
-			rc.Close()
-			return err
-		}
-		if _, err := io.Copy(out, rc); err != nil {
-			out.Close()
-			rc.Close()
-			return err
-		}
-		out.Close()
-		rc.Close()
-	}
-	return nil
-}
-
 // safeJoin joins name onto base, rejecting entries that would escape base.
 //
 // Traversal is reported as an error rather than silently rewritten: an archive
@@ -429,13 +354,11 @@ func safeJoin(base, name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("安装包包含空路径")
 	}
-	// Normalise separators so Windows and Unix archives behave identically.
+	// Reject absolute paths before joining, so a crafted archive cannot write
+	// outside the install directory.
 	slashed := filepath.ToSlash(name)
 	if strings.HasPrefix(slashed, "/") || filepath.IsAbs(name) {
 		return "", fmt.Errorf("安装包包含绝对路径: %s", name)
-	}
-	if len(slashed) >= 2 && slashed[1] == ':' {
-		return "", fmt.Errorf("安装包包含盘符路径: %s", name) // e.g. C:\...
 	}
 
 	clean := filepath.Clean(filepath.FromSlash(slashed))
@@ -456,22 +379,29 @@ func safeJoin(base, name string) (string, error) {
 //
 // The process is detached so it keeps running independently of pan-fetcher, and
 // its output is appended to jackett.log for troubleshooting.
-func Start(ctx context.Context, dir, url string, logf func(string, ...interface{})) error {
+//
+// It returns the base URL that actually answered. This matters because Jackett
+// does not necessarily honour the port we ask for: it resolves its data folder
+// from the user's config directory (~/.config/Jackett), not from the directory
+// the binary lives in, so a ServerConfig.json sitting next to the binary is
+// ignored. Any port already recorded in that config therefore wins, and the
+// caller must adopt the URL reported here rather than assume the requested one.
+func Start(ctx context.Context, dir, url string, logf func(string, ...interface{})) (string, error) {
 	logStep := func(format string, args ...interface{}) {
 		if logf != nil {
 			logf("[jackett-start] "+format, args...)
 		}
 	}
 
-	exe := filepath.Join(dir, executableName(runtime.GOOS))
+	exe := filepath.Join(dir, executableName())
 	if _, err := os.Stat(exe); err != nil {
-		return fmt.Errorf("未找到 Jackett 可执行文件: %s", exe)
+		return "", fmt.Errorf("未找到 Jackett 可执行文件: %s", exe)
 	}
 
 	logPath := filepath.Join(dir, "jackett.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("无法写入日志文件: %w", err)
+		return "", fmt.Errorf("无法写入日志文件: %w", err)
 	}
 	defer logFile.Close()
 
@@ -479,10 +409,12 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	cmd.Dir = dir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	detachProcess(cmd)
+	// Put the child in its own session so it survives pan-fetcher exiting and
+	// is not tied to this process's controlling terminal.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动 Jackett 失败: %w", err)
+		return "", fmt.Errorf("启动 Jackett 失败: %w", err)
 	}
 	pid := cmd.Process.Pid
 	logStep("已启动 Jackett (pid=%d)", pid)
@@ -492,23 +424,55 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	// Release the child so it is not killed when pan-fetcher exits.
 	_ = cmd.Process.Release()
 
-	// Wait for the HTTP endpoint to come up; Jackett needs a few seconds on
-	// first run because it initialises its indexer definitions.
-	if url == "" {
-		url = buildBaseURL("127.0.0.1", DefaultPort)
-	}
+	// Candidate endpoints, most specific first. The requested URL is tried
+	// first, then whatever the OS-level config points at, then the default.
+	candidates := candidateStartURLs(url)
+
+	// Jackett needs a few seconds on first run because it initialises its
+	// indexer definitions, so allow a generous window.
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return "", ctx.Err()
 		}
-		if _, ok := probeJackett(url); ok {
-			logStep("Jackett 已就绪: %s", url)
-			return nil
+		for _, cand := range candidates {
+			if _, ok := probeJackett(cand); ok {
+				logStep("Jackett 已就绪: %s", cand)
+				return cand, nil
+			}
 		}
 		time.Sleep(1500 * time.Millisecond)
 	}
-	return fmt.Errorf("Jackett 已启动但未在 90 秒内就绪，请查看 %s", logPath)
+	return "", fmt.Errorf("Jackett 已启动但未在 90 秒内就绪，请查看 %s", logPath)
+}
+
+// candidateStartURLs lists the addresses worth probing after a launch, in
+// priority order and without duplicates.
+func candidateStartURLs(requested string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(u string) {
+		u = strings.TrimRight(strings.TrimSpace(u), "/")
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+
+	add(requested)
+
+	// The OS-level ServerConfig.json records the port Jackett will really use.
+	if _, cfg := readServerConfig(); cfg != nil {
+		port := DefaultPort
+		if cfg.Port != nil && *cfg.Port > 0 {
+			port = *cfg.Port
+		}
+		add(buildBaseURL("127.0.0.1", port))
+	}
+
+	add(buildBaseURL("127.0.0.1", DefaultPort))
+	return out
 }
 
 // Stop terminates a Jackett process started from dir, when its PID is known.

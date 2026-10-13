@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -184,34 +183,21 @@ func portFromURL(raw string) int {
 	return 0
 }
 
-// configCandidates lists ServerConfig.json locations for the current platform,
-// covering native installs, portable installs and the official Docker image.
+// configCandidates lists ServerConfig.json locations on Linux, covering native
+// installs, the official Docker image, container mounts and portable installs.
+//
+// Jackett resolves this file from the user's config directory, not from the
+// directory the binary lives in, so an install managed by pan-fetcher still
+// reads and writes the location listed first here.
 func configCandidates() []string {
 	var paths []string
 
-	switch runtime.GOOS {
-	case "windows":
-		if pd := os.Getenv("ProgramData"); pd != "" {
-			paths = append(paths, filepath.Join(pd, "Jackett", "ServerConfig.json"))
-		}
-		paths = append(paths, `C:\ProgramData\Jackett\ServerConfig.json`)
-		if la := os.Getenv("LOCALAPPDATA"); la != "" {
-			paths = append(paths, filepath.Join(la, "Jackett", "ServerConfig.json"))
-		}
-	case "darwin":
-		if home, err := os.UserHomeDir(); err == nil {
-			paths = append(paths,
-				filepath.Join(home, ".config", "Jackett", "ServerConfig.json"),
-				filepath.Join(home, "Library", "Application Support", "Jackett", "ServerConfig.json"),
-			)
-		}
-	default: // linux and other unixes
-		if home, err := os.UserHomeDir(); err == nil {
-			paths = append(paths, filepath.Join(home, ".config", "Jackett", "ServerConfig.json"))
-		}
-		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-			paths = append(paths, filepath.Join(xdg, "Jackett", "ServerConfig.json"))
-		}
+	// Native installs: ~/.config/Jackett, or $XDG_CONFIG_HOME when set.
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		paths = append(paths, filepath.Join(xdg, "Jackett", "ServerConfig.json"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths, filepath.Join(home, ".config", "Jackett", "ServerConfig.json"))
 	}
 
 	// Official Docker image and common container mounts.
@@ -220,7 +206,7 @@ func configCandidates() []string {
 		"/app/Jackett/ServerConfig.json",
 	)
 
-	// Portable installs keep the data folder next to the binary.
+	// Portable installs keep the data folder next to the binary or the cwd.
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		paths = append(paths,

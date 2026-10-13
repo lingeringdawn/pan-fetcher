@@ -16,6 +16,9 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata sqlite-libs curl
 
 ENV TZ=Asia/Shanghai
+# Alpine is musl-based, so the one-click Jackett install must fetch the musl
+# build; the default glibc binary will not run here.
+ENV JACKETT_MUSL=1
 
 WORKDIR /app
 COPY --from=builder /build/pan-fetcher .

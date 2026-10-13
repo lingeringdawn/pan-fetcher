@@ -3,49 +3,46 @@ package jackett
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
+// TestAssetNameForPlatform covers the Linux-only asset mapping.
 func TestAssetNameForPlatform(t *testing.T) {
 	cases := []struct {
-		goos    string
 		goarch  string
 		want    string
 		wantErr bool
 	}{
-		{"windows", "amd64", "Jackett.Binaries.Windows.zip", false},
-		{"darwin", "amd64", "Jackett.Binaries.macOS.tar.gz", false},
-		{"darwin", "arm64", "Jackett.Binaries.macOSARM64.tar.gz", false},
-		{"linux", "amd64", "Jackett.Binaries.LinuxAMDx64.tar.gz", false},
-		{"linux", "arm64", "Jackett.Binaries.LinuxARM64.tar.gz", false},
-		{"linux", "arm", "Jackett.Binaries.LinuxARM32.tar.gz", false},
-		{"windows", "arm64", "", true},
-		{"linux", "mips", "", true},
-		{"plan9", "amd64", "", true},
+		{"amd64", "Jackett.Binaries.LinuxAMDx64.tar.gz", false},
+		{"arm64", "Jackett.Binaries.LinuxARM64.tar.gz", false},
+		{"arm", "Jackett.Binaries.LinuxARM32.tar.gz", false},
+		{"mips", "", true},
+		{"386", "", true},
+		{"", "", true},
 	}
 	for _, tc := range cases {
-		got, err := assetNameForPlatform(tc.goos, tc.goarch)
+		got, err := assetNameForPlatform(tc.goarch)
 		if tc.wantErr {
 			if err == nil {
-				t.Errorf("%s/%s: expected error, got %q", tc.goos, tc.goarch, got)
+				t.Errorf("%s: expected error, got %q", tc.goarch, got)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("%s/%s: unexpected error: %v", tc.goos, tc.goarch, err)
+			t.Errorf("%s: unexpected error: %v", tc.goarch, err)
 			continue
 		}
 		if got != tc.want {
-			t.Errorf("%s/%s: got %q, want %q", tc.goos, tc.goarch, got, tc.want)
+			t.Errorf("%s: got %q, want %q", tc.goarch, got, tc.want)
 		}
 	}
 }
 
-// TestAssetNameMusl verifies the musl opt-in selects the musl builds.
+// TestAssetNameMusl verifies the musl opt-in selects the musl builds, which is
+// what Alpine-based containers need.
 func TestAssetNameMusl(t *testing.T) {
 	t.Setenv("JACKETT_MUSL", "1")
-	got, err := assetNameForPlatform("linux", "amd64")
+	got, err := assetNameForPlatform("amd64")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,12 +161,12 @@ func TestExtractVersion(t *testing.T) {
 	}
 }
 
+// TestExecutableName pins the launcher name inside the Linux archive. Jackett
+// ships a lowercase "jackett" beside its managed DLLs — there is no capitalised
+// binary, which is easy to get wrong.
 func TestExecutableName(t *testing.T) {
-	if got := executableName("windows"); got != "Jackett.exe" {
-		t.Errorf("windows: got %q", got)
-	}
-	if got := executableName("linux"); got != "Jackett" {
-		t.Errorf("linux: got %q", got)
+	if got := executableName(); got != "jackett" {
+		t.Errorf("executableName() = %q, want %q", got, "jackett")
 	}
 }
 
@@ -226,7 +223,7 @@ func TestFlattenSingleRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(inner, "Content"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exe := executableName(runtime.GOOS)
+	exe := executableName()
 	if err := os.WriteFile(filepath.Join(inner, exe), []byte("bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +247,7 @@ func TestFlattenSingleRoot(t *testing.T) {
 // alone rather than being reorganised.
 func TestFlattenSingleRootNoopWhenExeAtTop(t *testing.T) {
 	base := t.TempDir()
-	exe := executableName(runtime.GOOS)
+	exe := executableName()
 	if err := os.WriteFile(filepath.Join(base, exe), []byte("bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +271,7 @@ func TestFlattenSingleRootNoopWhenExeAtTop(t *testing.T) {
 // force=false must not re-download when the executable is already present.
 func TestInstallReusesExisting(t *testing.T) {
 	dir := t.TempDir()
-	exe := filepath.Join(dir, executableName(runtime.GOOS))
+	exe := filepath.Join(dir, executableName())
 	if err := os.WriteFile(exe, []byte("existing"), 0o755); err != nil {
 		t.Fatal(err)
 	}
