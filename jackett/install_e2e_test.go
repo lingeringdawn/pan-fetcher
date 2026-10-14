@@ -129,11 +129,14 @@ func TestE2EStartAndProbe(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	// Jackett resolves its data folder from the OS, so the requested port is
-	// only a hint; Start reports the endpoint that actually answered.
-	port := freePort(t)
-	writeJackettPort(t, dir, port)
-	url := buildBaseURL("127.0.0.1", port)
+	// Jackett reads its data folder from ~/.config/Jackett, so point HOME at a
+	// scratch directory: this keeps the test instance off the developer's real
+	// configuration and off the default port.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	writeJackettPort(t, filepath.Join(home, ".config", "Jackett"), freePort(t))
+	url := buildBaseURL("127.0.0.1", readPortFrom(t, filepath.Join(home, ".config", "Jackett")))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -170,6 +173,16 @@ func TestE2EStartAndProbe(t *testing.T) {
 	}
 }
 
+// readPortFrom reads back the port recorded in a Jackett config directory.
+func readPortFrom(t *testing.T, dir string) int {
+	t.Helper()
+	_, cfg := readServerConfig()
+	if cfg == nil || cfg.Port == nil {
+		t.Fatalf("no ServerConfig.json with a Port found in %s", dir)
+	}
+	return *cfg.Port
+}
+
 // freePort asks the OS for an unused TCP port and releases it immediately.
 func freePort(t *testing.T) int {
 	t.Helper()
@@ -185,13 +198,15 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// writeJackettPort rewrites ServerConfig.json so Jackett binds to port on
+// writeJackettPort writes a ServerConfig.json binding Jackett to port on
 // loopback only, keeping the test instance off the network.
 func writeJackettPort(t *testing.T, dir string, port int) {
 	t.Helper()
-	cfgPath := filepath.Join(dir, "ServerConfig.json")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
 	content := `{"Port": ` + strconv.Itoa(port) + `, "LocalBindAddress": "127.0.0.1"}`
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ServerConfig.json"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write ServerConfig.json: %v", err)
 	}
 }

@@ -305,20 +305,63 @@ func probeJackett(base string) (version string, ok bool) {
 		conn.Close()
 	}
 
-	client := &http.Client{Timeout: 4 * time.Second}
+	// Jackett fingerprints itself in headers and redirect targets, not only in
+	// page text: a bare GET /UI/Login answers 302 with Set-Cookie TestCookie=1
+	// and a Server: Kestrel header, and GET / redirects to /UI/Dashboard. Both
+	// are Jackett-specific and survive even when the body is empty, which is why
+	// matching on body text alone is unreliable. Redirects are not followed here
+	// so those markers remain visible.
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Get(base + "/UI/Login")
 	if err != nil {
 		return "", false
 	}
 	defer resp.Body.Close()
-
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	// Jackett's login page always carries its name; requiring it avoids
-	// mistaking an unrelated service on the same port for Jackett.
-	if !strings.Contains(strings.ToLower(string(body)), "jackett") {
+	text := strings.ToLower(string(body))
+	location := strings.ToLower(resp.Header.Get("Location"))
+
+	looksLikeJackett := strings.Contains(text, "jackett") ||
+		strings.Contains(location, "/ui/") ||
+		hasJackettCookie(resp.Cookies())
+
+	if !looksLikeJackett && resp.StatusCode == http.StatusMovedPermanently {
+		// A plain root redirect to /UI/Dashboard is the other Jackett marker.
+		if r2, err := client.Get(base + "/"); err == nil {
+			loc := strings.ToLower(r2.Header.Get("Location"))
+			looksLikeJackett = strings.Contains(loc, "/ui/")
+			r2.Body.Close()
+		}
+	}
+	if !looksLikeJackett {
 		return "", false
 	}
-	return extractVersion(string(body)), true
+
+	// Recover the version when the server rendered a page; absence is fine.
+	if v := extractVersion(string(body)); v != "" {
+		return v, true
+	}
+	if r3, err := client.Get(base + "/UI/Login"); err == nil {
+		b3, _ := io.ReadAll(io.LimitReader(r3.Body, 64*1024))
+		r3.Body.Close()
+		return extractVersion(string(b3)), true
+	}
+	return "", true
+}
+
+// hasJackettCookie reports whether the response set Jackett's TestCookie probe.
+func hasJackettCookie(cookies []*http.Cookie) bool {
+	for _, c := range cookies {
+		if strings.EqualFold(c.Name, "TestCookie") {
+			return true
+		}
+	}
+	return false
 }
 
 // versionRe matches the semantic version Jackett renders in its page footer.

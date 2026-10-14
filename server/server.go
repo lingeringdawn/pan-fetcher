@@ -2810,9 +2810,11 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		}
 		cmd := exec.Command(exe, args...)
 		cmd.Dir = filepath.Dir(exe)
-		// Detach from the parent session so the replacement process survives our
-		// exit and is not tied to this process's controlling terminal.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
+		// Detach into a new session so the replacement process survives our exit
+		// and is not tied to this process's controlling terminal. Setsid also
+		// creates a new process group; adding Setpgid would fail with EPERM
+		// because setpgid(2) rejects a session leader.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		cmd.Stdin = nil
 		cmd.Stdout = nil
 		cmd.Stderr = nil
@@ -3053,8 +3055,10 @@ func doRestart() {
 	}
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = filepath.Dir(exe)
-	// Detach from the parent session so the replacement process survives our exit.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
+	// Detach into a new session so the replacement process survives our exit.
+	// Setsid also creates a new process group; Setpgid must not be combined with
+	// it, since setpgid(2) rejects a session leader with EPERM.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +25,18 @@ const releaseAPI = "https://api.github.com/repos/Jackett/Jackett/releases/latest
 
 // installTimeout bounds the whole download+extract operation.
 const installTimeout = 15 * time.Minute
+
+// detachedSysProcAttr returns the attributes used to launch Jackett so that it
+// outlives pan-fetcher and is not tied to our controlling terminal.
+//
+// Setsid alone is both necessary and sufficient: it puts the child in a new
+// session, which also gives it a new process group. Setpgid must NOT be added
+// alongside it — setsid(2) makes the child a session leader, and setpgid(2)
+// then rejects it with EPERM, so every launch would fail at fork/exec with
+// "operation not permitted".
+func detachedSysProcAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{Setsid: true}
+}
 
 // InstallResult reports what an install attempt produced.
 type InstallResult struct {
@@ -411,7 +426,7 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	cmd.Stderr = logFile
 	// Put the child in its own session so it survives pan-fetcher exiting and
 	// is not tied to this process's controlling terminal.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Setsid: true}
+	cmd.SysProcAttr = detachedSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 Jackett 失败: %w", err)
@@ -425,15 +440,23 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	_ = cmd.Process.Release()
 
 	// Candidate endpoints, most specific first. The requested URL is tried
-	// first, then whatever the OS-level config points at, then the default.
+	// first, then whatever the user-level config points at, then the default.
 	candidates := candidateStartURLs(url)
 
 	// Jackett needs a few seconds on first run because it initialises its
-	// indexer definitions, so allow a generous window.
+	// indexer definitions, so allow a generous window. On each pass we also
+	// re-read the log for the address the server reports, which is authoritative
+	// when Kestrel binds a family we did not guess.
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
+		}
+		if reported := listenURLFromLog(logPath); reported != "" {
+			if _, ok := probeJackett(reported); ok {
+				logStep("Jackett 已就绪: %s", reported)
+				return reported, nil
+			}
 		}
 		for _, cand := range candidates {
 			if _, ok := probeJackett(cand); ok {
@@ -446,8 +469,67 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	return "", fmt.Errorf("Jackett 已启动但未在 90 秒内就绪，请查看 %s", logPath)
 }
 
+// listenRe matches the line Kestrel prints once it is accepting connections,
+// e.g. "Now listening on: http://[::]:9117".
+var listenRe = regexp.MustCompile(`(?m)^\s*Now listening on:\s*(\S+)`)
+
+// listenURLFromLog reports the last address Jackett announced it is listening
+// on, rewritten to a diallable loopback URL.
+//
+// This is the most reliable signal: the server may bind the IPv6 wildcard even
+// when configured for IPv4, and probing the wrong family would never succeed.
+func listenURLFromLog(logPath string) string {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return ""
+	}
+	matches := listenRe.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	raw := matches[len(matches)-1][1]
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	// A wildcard bind address cannot be dialled; substitute a loopback address
+	// so the probe reaches the socket the server just opened.
+	//
+	// IPv4 loopback is preferred: Kestrel reports "http://[::]:port" even when
+	// the socket is reachable over IPv4, while "[::1]" frequently refuses the
+	// connection on hosts with dual-stack disabled.
+	host := u.Hostname()
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return buildBaseURL("127.0.0.1", atoiOrZero(port))
+	default:
+		return buildBaseURL(host, atoiOrZero(port))
+	}
+}
+
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // candidateStartURLs lists the addresses worth probing after a launch, in
 // priority order and without duplicates.
+//
+// Both loopback families are included: Jackett's Kestrel host may bind the IPv6
+// wildcard ("Now listening on: http://[::]:9117") even when asked for IPv4, and
+// on a host where ::1 and 127.0.0.1 are not interchangeable the IPv4 probe never
+// succeeds.
 func candidateStartURLs(requested string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -459,19 +541,28 @@ func candidateStartURLs(requested string) []string {
 		seen[u] = true
 		out = append(out, u)
 	}
+	addHost := func(port int) {
+		add(buildBaseURL("127.0.0.1", port))
+		add(buildBaseURL("[::1]", port))
+	}
 
 	add(requested)
+	// If the requested URL used a hostname other than loopback, still try both
+	// loopback families on the same port before falling back to defaults.
+	if p := portFromURL(requested); p > 0 {
+		addHost(p)
+	}
 
-	// The OS-level ServerConfig.json records the port Jackett will really use.
+	// The user-level ServerConfig.json records the port Jackett will really use.
 	if _, cfg := readServerConfig(); cfg != nil {
 		port := DefaultPort
 		if cfg.Port != nil && *cfg.Port > 0 {
 			port = *cfg.Port
 		}
-		add(buildBaseURL("127.0.0.1", port))
+		addHost(port)
 	}
 
-	add(buildBaseURL("127.0.0.1", DefaultPort))
+	addHost(DefaultPort)
 	return out
 }
 
