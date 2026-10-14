@@ -152,7 +152,7 @@ func TestE2EStartAndProbe(t *testing.T) {
 	t.Cleanup(func() { _ = Stop(dir) })
 	t.Logf("requested %s, actually listening on %s", url, actualURL)
 
-	if _, ok := probeJackett(actualURL); !ok {
+	if !probeJackett(actualURL) {
 		t.Errorf("probeJackett did not recognise the started instance at %s", actualURL)
 	}
 	if err := HealthCheck(actualURL); err != nil {

@@ -453,13 +453,13 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 			return "", ctx.Err()
 		}
 		if reported := listenURLFromLog(logPath); reported != "" {
-			if _, ok := probeJackett(reported); ok {
+			if probeJackett(reported) {
 				logStep("Jackett 已就绪: %s", reported)
 				return reported, nil
 			}
 		}
 		for _, cand := range candidates {
-			if _, ok := probeJackett(cand); ok {
+			if probeJackett(cand) {
 				logStep("Jackett 已就绪: %s", cand)
 				return cand, nil
 			}

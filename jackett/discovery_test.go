@@ -144,23 +144,6 @@ func TestParseServerConfigInvalid(t *testing.T) {
 	}
 }
 
-func TestExtractVersion(t *testing.T) {
-	cases := []struct {
-		body string
-		want string
-	}{
-		{`<html>Jackett v0.24.2830</html>`, "0.24.2830"},
-		{`Jackett Version: v0.21.1`, "0.21.1"},
-		{`<html>Jackett</html>`, ""},
-		{``, ""},
-	}
-	for _, tc := range cases {
-		if got := extractVersion(tc.body); got != tc.want {
-			t.Errorf("extractVersion(%q) = %q, want %q", tc.body, got, tc.want)
-		}
-	}
-}
-
 // TestExecutableName pins the launcher name inside the Linux archive. Jackett
 // ships a lowercase "jackett" beside its managed DLLs — there is no capitalised
 // binary, which is easy to get wrong.

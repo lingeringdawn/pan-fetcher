@@ -3704,7 +3704,6 @@ func (s *Server) handleJackettDiscover(w http.ResponseWriter, r *http.Request) {
 		"admin_password": d.AdminPassword,
 		"port":           d.Port,
 		"config_path":    d.ConfigPath,
-		"version":        d.Version,
 		"source":         d.Source,
 		// The install directory is reported so the UI can show where Jackett
 		// would be placed before the user commits to downloading it.

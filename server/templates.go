@@ -1600,7 +1600,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
           h+='<span style="font-size:13px;color:var(--accent-2);font-weight:600;">● {{index .T "jk_connected"}}</span>';
           h+='<code style="font-size:12px;background:var(--bg);padding:2px 8px;border-radius:6px;">'+ (info&&info.url ? info.url : '{{.JackettURL}}') +'</code>';
-          if(info&&info.version){h+='<span class="muted" style="font-size:12px;">v'+info.version+'</span>';}
           h+='<button type="button" onclick="jkDiscover()" style="margin:0;padding:4px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_redetect"}}</button>';
           h+='<a href="/settings" style="font-size:12px;color:var(--accent);">{{index .T "jk_edit_manual"}}</a>';
           h+='</div>';

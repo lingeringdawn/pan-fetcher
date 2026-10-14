@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -39,8 +38,6 @@ type Discovery struct {
 	Port int
 	// ConfigPath is the ServerConfig.json that was read, empty if none.
 	ConfigPath string
-	// Version is the Jackett version reported by the API, when reachable.
-	Version string
 	// Source explains where the values came from, for display in the UI.
 	Source string
 }
@@ -90,15 +87,13 @@ func Discover() Discovery {
 	ports := candidatePorts(d.Port, cfg)
 	for _, p := range ports {
 		base := buildBaseURL("127.0.0.1", p)
-		version, ok := probeJackett(base)
-		if !ok {
+		if !probeJackett(base) {
 			continue
 		}
 		d.Found = true
 		d.Running = true
 		d.Port = p
 		d.URL = base
-		d.Version = version
 		d.Source = "probe"
 		break
 	}
@@ -128,7 +123,7 @@ func Discover() Discovery {
 		d.APIKey = envKey
 	}
 	if d.URL != "" {
-		if _, ok := probeJackett(d.URL); ok {
+		if probeJackett(d.URL) {
 			d.Running = true
 		}
 	}
@@ -276,15 +271,14 @@ func trimBOM(b []byte) []byte {
 	return b
 }
 
-// probeJackett reports whether a Jackett instance answers at base, returning its
-// version when the API exposes one.
+// probeJackett reports whether a Jackett instance answers at base.
 //
 // The UI login page is used rather than the Torznab API because it needs no API
 // key, so detection still succeeds before credentials are known.
-func probeJackett(base string) (version string, ok bool) {
+func probeJackett(base string) bool {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {
-		return "", false
+		return false
 	}
 
 	// Fast pre-check: if nothing is listening, skip the HTTP round trip.
@@ -300,17 +294,17 @@ func probeJackett(base string) (version string, ok bool) {
 		}
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 700*time.Millisecond)
 		if err != nil {
-			return "", false
+			return false
 		}
 		conn.Close()
 	}
 
-	// Jackett fingerprints itself in headers and redirect targets, not only in
-	// page text: a bare GET /UI/Login answers 302 with Set-Cookie TestCookie=1
-	// and a Server: Kestrel header, and GET / redirects to /UI/Dashboard. Both
-	// are Jackett-specific and survive even when the body is empty, which is why
-	// matching on body text alone is unreliable. Redirects are not followed here
-	// so those markers remain visible.
+	// Jackett fingerprints itself in headers and redirect targets rather than in
+	// page text: a bare GET /UI/Login answers 302 with Set-Cookie TestCookie=1,
+	// and GET / redirects to /UI/Dashboard. Both markers survive even though the
+	// body is empty, which is why matching on body text alone is unreliable —
+	// an earlier version of this probe did exactly that and never detected a
+	// perfectly healthy instance.
 	client := &http.Client{
 		Timeout: 4 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -319,39 +313,30 @@ func probeJackett(base string) (version string, ok bool) {
 	}
 	resp, err := client.Get(base + "/UI/Login")
 	if err != nil {
-		return "", false
+		return false
 	}
-	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	resp.Body.Close()
 	text := strings.ToLower(string(body))
 	location := strings.ToLower(resp.Header.Get("Location"))
 
-	looksLikeJackett := strings.Contains(text, "jackett") ||
+	if strings.Contains(text, "jackett") ||
 		strings.Contains(location, "/ui/") ||
-		hasJackettCookie(resp.Cookies())
+		hasJackettCookie(resp.Cookies()) {
+		return true
+	}
 
-	if !looksLikeJackett && resp.StatusCode == http.StatusMovedPermanently {
-		// A plain root redirect to /UI/Dashboard is the other Jackett marker.
+	// A plain root redirect to /UI/Dashboard is the other Jackett marker.
+	if resp.StatusCode == http.StatusMovedPermanently {
 		if r2, err := client.Get(base + "/"); err == nil {
 			loc := strings.ToLower(r2.Header.Get("Location"))
-			looksLikeJackett = strings.Contains(loc, "/ui/")
 			r2.Body.Close()
+			if strings.Contains(loc, "/ui/") {
+				return true
+			}
 		}
 	}
-	if !looksLikeJackett {
-		return "", false
-	}
-
-	// Recover the version when the server rendered a page; absence is fine.
-	if v := extractVersion(string(body)); v != "" {
-		return v, true
-	}
-	if r3, err := client.Get(base + "/UI/Login"); err == nil {
-		b3, _ := io.ReadAll(io.LimitReader(r3.Body, 64*1024))
-		r3.Body.Close()
-		return extractVersion(string(b3)), true
-	}
-	return "", true
+	return false
 }
 
 // hasJackettCookie reports whether the response set Jackett's TestCookie probe.
@@ -364,16 +349,6 @@ func hasJackettCookie(cookies []*http.Cookie) bool {
 	return false
 }
 
-// versionRe matches the semantic version Jackett renders in its page footer.
-var versionRe = regexp.MustCompile(`(?i)v(\d+\.\d+\.\d+)`)
-
-func extractVersion(body string) string {
-	if m := versionRe.FindStringSubmatch(body); len(m) >= 2 {
-		return m[1]
-	}
-	return ""
-}
-
 // HealthCheck verifies that the given URL answers like a Jackett instance.
 // Unlike Test it does not require an API key, so it can validate a URL before
 // the user supplies credentials.
@@ -381,7 +356,7 @@ func HealthCheck(baseURL string) error {
 	if strings.TrimSpace(baseURL) == "" {
 		return fmt.Errorf("URL 为空")
 	}
-	if _, ok := probeJackett(baseURL); !ok {
+	if !probeJackett(baseURL) {
 		return fmt.Errorf("未在该地址检测到 Jackett: %s", baseURL)
 	}
 	return nil

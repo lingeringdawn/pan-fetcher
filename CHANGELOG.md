@@ -17,6 +17,7 @@
 - 新增 `jackett/discovery_e2e_test.go`：让 Jackett 自行生成配置，验证自动检测读出的 API Key 能真正通过 Torznab 认证，而非仅断言字符串非空。
 - 新增 `jackett/detach_test.go`：实际派生进程校验子进程分离标志，防止 `Setsid`/`Setpgid` 互斥问题回归。
 - 新增 `jackett/client_test.go`：覆盖 Torznab 错误文档识别。
+- 新增 `jackett/probe_test.go`：以假 Jackett 服务覆盖探测判据，含 TestCookie 重定向、空响应、以及拒绝同端口的普通 Web 服务。
 
 ### 修复
 - 设置页改为「提交哪些字段就只改哪些字段」：此前一次部分提交（如自动检测只回填 URL）会把未提交的 Jackett API Key、TMDB Key 等一并清空。
@@ -25,6 +26,9 @@
 - **子进程分离标志互斥（真实 Linux 上功能完全不可用）**：`SysProcAttr` 同时设置 `Setsid` 与 `Setpgid` 会让 `fork/exec` 返回 `EPERM`——`setsid(2)` 使子进程成为会话首进程，`setpgid(2)` 随即拒绝它。这导致一键安装启动 Jackett 与自更新重启均失败。现只保留 `Setsid`（它本身已创建新进程组），并新增回归测试实际派生进程验证。
 - **Jackett 探测判据失效**：`/UI/Login` 返回 302 且响应体为空，而探测要求正文含 "jackett"，故永远判定失败，`Start` 会一直等到 90 秒超时。现同时识别 Jackett 特有指纹（`Set-Cookie: TestCookie`、`Server: Kestrel`、重定向至 `/UI/`），不再单纯依赖页面正文。
 - **监听地址可能不可拨**：Kestrel 报告 `http://[::]:port`，但该地址常无法连接而 IPv4 回环可用。`Start` 现将日志中的监听地址与两种回环地址一并作为候选，并优先使用 IPv4。
+
+### 清理
+- 移除 Jackett 版本号探测。实测确认版本由页面 JavaScript 填入空占位符（`<span id="app-version"></span>`），HTML 中并不存在版本字符串，正则永远匹配不到；该逻辑曾额外发起两次 HTTP 请求却始终返回空值。相应的 `Discovery.Version` 字段、`extractVersion` 与界面上的版本显示一并删除。
 
 ## v0.3.1 (2026-07)
 
