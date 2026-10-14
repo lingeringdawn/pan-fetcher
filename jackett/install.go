@@ -439,6 +439,16 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	// Release the child so it is not killed when pan-fetcher exits.
 	_ = cmd.Process.Release()
 
+	// A missing native dependency (libicu is the common one for the official
+	// .NET build) aborts the process within a second or two, before Kestrel ever
+	// binds a port. Without this check we would report success and then sit
+	// through the whole readiness poll, leaving the user with a "connected"
+	// looking install that never answers. Give the process a moment to either
+	// survive or die, and surface whatever it wrote to the log.
+	if err := waitAlive(pid, 3*time.Second); err != nil {
+		return "", fmt.Errorf("Jackett 启动后立即退出: %v%s", err, crashHint(logPath))
+	}
+
 	// Candidate endpoints, most specific first. The requested URL is tried
 	// first, then whatever the user-level config points at, then the default.
 	candidates := candidateStartURLs(url)
@@ -467,6 +477,101 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 		time.Sleep(1500 * time.Millisecond)
 	}
 	return "", fmt.Errorf("Jackett 已启动但未在 90 秒内就绪，请查看 %s", logPath)
+}
+
+// waitAlive reports an error if the process exits within d.
+//
+// The child was started detached and released, so it cannot be waited on
+// through the os/exec handle; the only portable signal left is existence of the
+// PID. A zombie also counts as gone: its parent is pan-fetcher (which never
+// reaps it because we released the handle), so a defunct entry means the
+// process finished and nobody collected it yet.
+func waitAlive(pid int, d time.Duration) error {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return fmt.Errorf("进程 %d 已退出", pid)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil
+}
+
+// processAlive reports whether pid still names a running process.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	// Signal 0 performs the permission/existence checks without signalling.
+	if err := syscall.Kill(pid, 0); err != nil {
+		return false
+	}
+	// The process exists but may be a zombie left behind after a crash.
+	return processState(pid) != "Z"
+}
+
+// crashHint extracts a short, actionable reason from Jackett's log.
+//
+// Jackett writes .NET stack traces to this file and not to stdout, so a missing
+// shared library only ever shows up here.
+func crashHint(logPath string) string {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// The first non-empty line usually names the failure directly.
+	first := ""
+	for _, l := range lines {
+		if t := strings.TrimSpace(l); t != "" {
+			first = t
+			break
+		}
+	}
+	if first == "" {
+		return ""
+	}
+
+	// .NET reports a missing ICU as a FailFast during CultureInfo init, which is
+	// cryptic; translate it into the fix.
+	if strings.Contains(first, "GlobalizationMode") ||
+		strings.Contains(first, "CultureData") ||
+		strings.Contains(first, "CreateCultureWithInvariantData") {
+		return "（原因：缺少 ICU 库，.NET 无法初始化全球化支持。" +
+			"Debian/Ubuntu 请安装：apt-get install -y libicu72）"
+	}
+	return "（日志首行: " + truncateForHint(first) + "）"
+}
+
+func truncateForHint(s string) string {
+	const max = 160
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// processState returns the single-letter scheduler state of pid ("R", "S", "Z",
+// …) or "" when it cannot be determined.
+func processState(pid int) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	// Field 4 (index 3) is the state, but field 2 (comm) may contain spaces and
+	// parentheses, so parse after the closing paren.
+	s := string(data)
+	if i := strings.LastIndex(s, ")"); i >= 0 && i+2 < len(s) {
+		rest := strings.TrimSpace(s[i+1:])
+		if rest != "" {
+			return rest[:1]
+		}
+	}
+	return ""
 }
 
 // listenRe matches the line Kestrel prints once it is accepting connections,
