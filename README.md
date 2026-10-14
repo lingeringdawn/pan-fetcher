@@ -1,7 +1,7 @@
 # pan-fetcher · 115 网盘 RSS BT 下载订阅工具
 
 <p align="center">
-  <strong>聚合搜索 · Jackett/Prowlarr 集成 · TMDB 发现 · 自动订阅 · 离线下载 · 文件管理</strong>
+  <strong>聚合搜索 · Jackett 集成 · TMDB 发现 · 自动订阅 · 离线下载 · 文件管理</strong>
 </p>
 
 <p align="center">
@@ -24,13 +24,15 @@
 
 ### 🔍 聚合搜索
 
-基于 Jackett / Prowlarr 的数百个索引器。标签筛选、关键词过滤、分页浏览，搜索结果自动去重。
+基于 Jackett 的数百个索引器。标签筛选、关键词过滤、分页浏览，搜索结果自动去重。
 
 <p align="center"><img src=".github/images/1738.jpg" alt="资源搜索" width="70%"></p>
 
-### 📡 Jackett / Prowlarr 集成
+### 📡 Jackett 集成
 
 自动检测本机 Jackett 并读取其配置（含 API Key），无需手工填写；检测不到时可一键下载安装并启动。自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。也支持手动输入地址与 API Key 连接远程实例。
+
+> 搜索走标准 Torznab 协议；自动检测与一键安装目前仅适配 Jackett，Prowlarr 尚未支持。
 
 <p align="center"><img src=".github/images/1741.jpg" alt="索引器" width="70%"></p>
 
@@ -176,8 +178,8 @@ Automated media downloader for 115 cloud storage. Search across BT indexers, dis
 ### Features
 
 - **🎬 TMDB Discover** — Search movies & TV shows, view full details (poster, overview, rating, genres), one-click jump to aggregated search.
-- **🔍 Aggregated Search** — Hundreds of indexers via Jackett/Prowlarr. Tag filter, keyword filter, pagination, auto-dedup.
-- **📡 Jackett/Prowlarr** — Auto-detect a local instance and read its API key; one-click download & install when absent; batch activate, connection test, source labels.
+- **🔍 Aggregated Search** — Hundreds of indexers via Jackett. Tag filter, keyword filter, pagination, auto-dedup.
+- **📡 Jackett** — Auto-detect a local instance and read its API key; one-click download & install when absent; batch activate, connection test, source labels. (Search speaks Torznab; detection and install are Jackett-only for now.)
 - **📋 RSS Subscriptions** — Scheduled fetch, smart dedup, keyword filter, cache management.
 - **📥 Offline Download** — Magnet/ed2k/http batch submit with status tabs.
 - **📂 File Manager** — Browse and manage 115 cloud files (mkdir, rename, move, copy, delete).

@@ -1348,12 +1348,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <span class="badge badge-running">Go</span>
         <span class="badge badge-running">SQLite</span>
         <span class="badge badge-done">115 API</span>
-        <span class="badge badge-done">Cardigann</span>
+        <span class="badge badge-done">Torznab</span>
       </div>
       <div style="margin-top:16px;padding:12px;background:#f8fafc;border-radius:10px;border:1px solid var(--line);">
         <table style="width:100%;font-size:13px;border-collapse:collapse;">
           <tr><td style="padding:4px 0;color:var(--muted);width:80px;">{{index .T "about_version"}}</td><td><strong>{{if .AboutVersion}}pan-fetcher {{.AboutVersion}}{{else}}{{index .T "about_version_error"}}{{end}}</strong></td></tr>
-          <tr><td style="padding:4px 0;color:var(--muted);">Go</td><td>1.23</td></tr>
+          <tr><td style="padding:4px 0;color:var(--muted);">Go</td><td>1.25</td></tr>
           <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_author"}}</td><td>lingeringdawn</td></tr>
         </table>
       </div>
