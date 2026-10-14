@@ -1749,16 +1749,102 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         document.getElementById('jk-add-list').innerHTML=h||'<div class="hint">{{index .T "jk_no_match"}}</div>';
       }
 
+      // Rendering all ~650 indexers at once froze the modal on low-end hosts
+      // (Jackett itself runs on the same box). Page them instead, and appending
+      // on scroll keeps the first paint immediate.
+      const JK_ADD_PAGE = 50;
+      var jkAddRendered = 0;
+      var jkAddFilter = '';
+
       function filterJKAddList(){
-        renderJKAddList(document.getElementById('jk-add-filter').value);
+        jkAddFilter = (document.getElementById('jk-add-filter').value || '').toLowerCase();
+        jkAddRendered = 0;
+        renderJKAddList();
       }
 
-      function jkAddToJackett(id){
-        showModal('添加索引器','正在向 Jackett 添加 <b>'+id+'</b>…');
-        apiPost('jk_add_to_jackett',{id}).then(function(r){
-          closeModal();
-          if(r.ok){location.reload();}
-          else{alertModal('添加失败: '+r.msg);}
+      function jkAddMatches(x){
+        if(!jkAddFilter) return true;
+        return x.name.toLowerCase().indexOf(jkAddFilter) >= 0
+            || x.id.toLowerCase().indexOf(jkAddFilter) >= 0;
+      }
+
+      function renderJKAddList(){
+        var box = document.getElementById('jk-add-list');
+        if(!box) return;
+        var visible = jkAllData.filter(jkAddMatches);
+        var slice = visible.slice(jkAddRendered, jkAddRendered + JK_ADD_PAGE);
+        if(jkAddRendered === 0){
+          box.innerHTML = '';
+        }
+        if(slice.length === 0 && jkAddRendered === 0){
+          box.innerHTML = '<div class="hint">{{index .T "jk_no_match"}}</div>';
+          return;
+        }
+        var h = '';
+        if(jkAddRendered === 0){
+          h += '<table class="tbl"><thead><tr><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "idx_lang"}}</th><th></th></tr></thead><tbody id="jk-add-tbody">';
+        }
+        slice.forEach(function(x){
+          h += '<tr><td>'+(x.site_link?'<a href="'+x.site_link+'" target="_blank">'+x.name+'</a>':'<strong>'+x.name+'</strong>')+'</td>';
+          h += '<td class="muted">'+(x.type||'')+'</td>';
+          h += '<td class="muted">'+(x.language||'')+'</td>';
+          h += '<td style="white-space:nowrap;">';
+          if(x.configured){
+            h += '<span style="font-size:11px;color:var(--muted);">{{index .T "configured"}}</span>';
+          }else{
+            h += '<button data-jk-add="'+x.id+'" style="padding:2px 8px;font-size:11px;margin:0;background:var(--accent-2);">{{index .T "add"}}</button>';
+          }
+          h += '</td></tr>';
+        });
+        jkAddRendered += slice.length;
+
+        // More results pending: offer a "load more" row rather than an
+        // infinite scroll handler, which needs no scroll listener and cannot
+        // fire repeatedly.
+        if(jkAddRendered < visible.length){
+          h += '</tbody></table><div style="text-align:center;padding:8px;">'
+             + '<button id="jk-add-more" style="margin:0;padding:4px 14px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">'
+             + '{{index .T "loading"}} (' + jkAddRendered + '/' + visible.length + ')</button></div>';
+        }else{
+          h += '</tbody></table>';
+        }
+        if(jkAddRendered === slice.length){
+          box.innerHTML = h;
+        }else{
+          box.insertAdjacentHTML('beforeend', h.replace(/^.*?<tbody[^>]*>/,'')); // body only when appending
+          // Replace the trailing "load more" button with nothing; it is gone now.
+          var prev = document.getElementById('jk-add-more');
+          if(prev && jkAddRendered >= visible.length){ prev.remove(); }
+        }
+        var more = document.getElementById('jk-add-more');
+        if(more){ more.onclick = function(){ more.textContent = '…'; renderJKAddList(); }; }
+        // Wire add buttons (delegated once would need a listener; direct is fine
+        // because we rebuild the rows we just inserted).
+        box.querySelectorAll('button[data-jk-add]').forEach(function(b){
+          b.onclick = function(){ jkAddToJackett(b.getAttribute('data-jk-add'), b); };
+        });
+      }
+
+      function jkAddToJackett(id, btn){
+        if(btn){btn.disabled = true; btn.textContent = '…';}
+        // Do not reload the page on success: the modal stays where the user is
+        // and only this row changes. A full reload re-fetches every indexer.
+        apiPost('jk_add_to_jackett',{id:id}).then(function(r){
+          if(r.ok){
+            if(btn){
+              btn.disabled = false;
+              btn.removeAttribute('data-jk-add');
+              btn.onclick = null;
+              btn.textContent = '{{index .T "configured"}}';
+              btn.style.background = 'transparent';
+              btn.style.color = 'var(--muted)';
+            }
+          }else{
+            if(btn){btn.disabled = false; btn.textContent = '{{index .T "add"}}';}
+            alertModal('添加失败: '+r.msg);
+          }
+        }).catch(function(){
+          if(btn){btn.disabled = false; btn.textContent = '{{index .T "add"}}';}
         });
       }
 

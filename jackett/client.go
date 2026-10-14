@@ -114,6 +114,23 @@ func Login(cfg Config) error {
 	return nil
 }
 
+// hasAuthCookie reports whether the shared jar already holds a Jackett session
+// cookie for base, so callers can skip a redundant login round trip.
+func hasAuthCookie(base string) bool {
+	u, err := url.Parse(strings.TrimRight(base, "/"))
+	if err != nil {
+		return false
+	}
+	cookieMu.Lock()
+	defer cookieMu.Unlock()
+	for _, c := range cookieJar.Cookies(u) {
+		if c.Name == "Jackett" {
+			return true
+		}
+	}
+	return false
+}
+
 // Config holds Jackett connection settings.
 type Config struct {
 	URL           string // e.g. "http://localhost:9117"
@@ -514,21 +531,31 @@ func Search(cfg Config, query string, categories []int, offset int) ([]Result, e
 // AddIndexer adds/activates an indexer in Jackett by fetching its default config
 // and posting it to the indexer's config endpoint.
 // Requires admin login cookie; calls Login automatically.
+//
+// Each HTTP step gets its own deadline. They used to share a single context, so
+// on a slow host (Jackett reloads and re-tests every indexer after a config
+// change) the earlier steps consumed the whole budget and the POST died with
+// "context deadline exceeded" after ~60s, even though the same POST completes in
+// about a second on its own.
 func AddIndexer(cfg Config, id string) error {
-	// Login for admin API access
-	if err := Login(cfg); err != nil {
-		return fmt.Errorf("login: %w", err)
+	// Reuse an existing session when we already hold a valid cookie; logging in
+	// on every call doubles the round trips exactly when Jackett is busiest.
+	if !hasAuthCookie(cfg.URL) {
+		if err := Login(cfg); err != nil {
+			return fmt.Errorf("login: %w", err)
+		}
 	}
 
 	baseURL := strings.TrimRight(cfg.URL, "/")
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	defer cancel()
 
 	// Step 1: GET default config
 	cfgURL, err := url.Parse(baseURL + "/api/v2.0/indexers/" + id + "/config")
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", cfgURL.String(), nil)
 	if err != nil {
@@ -557,13 +584,17 @@ func AddIndexer(cfg Config, id string) error {
 		return fmt.Errorf("此索引器需要登录凭据（用户名/密码/Cookie），请在 Jackett WebUI 中手动添加: %s/ui/indexers", baseURL)
 	}
 
-	// Step 2: POST config to add the indexer
+	// Step 2: POST config to add the indexer. A fresh deadline: this is the step
+	// Jackett makes slow, and it must not inherit time already spent above.
 	postURL, err := url.Parse(baseURL + "/api/v2.0/indexers/" + id + "/config")
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
-	postReq, err := http.NewRequestWithContext(ctx, "POST", postURL.String(), strings.NewReader(string(configJSON)))
+	ctx2, cancel2 := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel2()
+
+	postReq, err := http.NewRequestWithContext(ctx2, "POST", postURL.String(), strings.NewReader(string(configJSON)))
 	if err != nil {
 		return fmt.Errorf("create POST request: %w", err)
 	}
