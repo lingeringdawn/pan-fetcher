@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.0.0
 
 ### 破坏性变更
 - **项目仅支持 Linux。** 移除了 Windows / macOS 支持：删除 `p115/login_darwin.go`、`login_windows.go`、`server/restart_windows.go`、`jackett/detach_windows.go` 与 `scripts/docker-setup.ps1`；平台后缀文件改名为 `login.go` / `restart.go` / `detach.go`，不再需要构建标签区分平台。
