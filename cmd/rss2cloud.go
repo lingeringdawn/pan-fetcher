@@ -85,6 +85,14 @@ var (
 		Short: `Start server`,
 		Run: func(_cmd *cobra.Command, _args []string) {
 			cfg := initAgent(_cmd)
+
+			// Anchor runtime files before reading anything from disk. The
+			// password is loaded first because it gates every handler, so
+			// without this the lookup ran against the process working
+			// directory — which a self-update restart changes to the binary's
+			// folder, making the panel come back with no password.
+			server.InitDataDir(cfg.Database.Path)
+
 			server.SetPassword(webPassword)
 			server.LoadPersistedPassword()
 			srv := server.New(pAgent, cfg.Server.Port)

@@ -242,73 +242,145 @@ func TestIndexersPageRendersEmptyList(t *testing.T) {
 	}
 }
 
-// TestLogPollDoesNotDuplicate covers the live log panel re-rendering the whole
-// history on every poll.
+// TestPasswordLoadsAfterWorkingDirectoryChange is the regression test for the
+// panel coming back with no password after a self-update.
 //
-// The panel is oldest-first, so the cursor must be seeded with the LAST
-// rendered line (the newest one). It used to take the first line, which is the
-// oldest, and /api/logs then resolved the marker near the end of the buffer and
-// returned nearly every line again — the client appended them all, so the panel
-// grew a full copy of the log every 5 seconds.
-func TestLogPollDoesNotDuplicate(t *testing.T) {
+// LoadPersistedPassword ran before the data directory was anchored, so it
+// resolved web-settings.json against the process working directory. A
+// self-update restart changes that directory to the binary's folder, the file
+// was not found there, and the server started with an empty password — silently
+// disabling authentication for the whole panel.
+func TestPasswordLoadsAfterWorkingDirectoryChange(t *testing.T) {
+	dataDir := t.TempDir()
+	exeDir := t.TempDir()
+
+	// The password lives beside the database, as it does in a real deployment.
+	settings := `{"web_password":"s3cret"}`
+	if err := os.WriteFile(filepath.Join(dataDir, "web-settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the post-restart working directory.
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(exeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	// Restore global state for other tests.
+	savedDir, savedPw := dataDir, webPassword
+	t.Cleanup(func() { dataDir = savedDir; webPassword = savedPw })
+
+	webPassword = ""
+	InitDataDir(filepath.Join(dataDir, "db.sqlite"))
+	LoadPersistedPassword()
+
+	if webPassword != "s3cret" {
+		t.Fatalf("password not restored from the data dir: got %q", webPassword)
+	}
+}
+
+// TestInitDataDirResolvesSidecars verifies InitDataDir re-anchors the
+// package-level paths, so callers that run before New() still address the right
+// files.
+func TestInitDataDirResolvesSidecars(t *testing.T) {
+	dir := t.TempDir()
+
+	savedDir, savedDedup, savedRSS, savedSearch := dataDir, dedupCachePath, rssJsonPath, searchCacheFile
+	t.Cleanup(func() {
+		dataDir, dedupCachePath, rssJsonPath, searchCacheFile = savedDir, savedDedup, savedRSS, savedSearch
+	})
+
+	got := InitDataDir(filepath.Join(dir, "db.sqlite"))
+	if got != dir {
+		t.Errorf("InitDataDir returned %q, want %q", got, dir)
+	}
+	for name, path := range map[string]string{
+		"dedupCachePath":  dedupCachePath,
+		"rssJsonPath":     rssJsonPath,
+		"searchCacheFile": searchCacheFile,
+	} {
+		if filepath.Dir(path) != dir {
+			t.Errorf("%s = %q, want it under %q", name, path, dir)
+		}
+	}
+}
+
+// TestInitDataDirDefaults covers an unset database path, which happens when a
+// bare `pan-fetcher server` runs with no config file.
+func TestInitDataDirDefaults(t *testing.T) {
+	savedDir := dataDir
+	t.Cleanup(func() { dataDir = savedDir })
+
+	if got := InitDataDir(""); got == "" {
+		t.Error("InitDataDir(\"\") should fall back to a usable directory")
+	}
+}
+
+// TestLogPollDoesNotDuplicateOrReorder covers the log panel's incremental
+// refresh.
+//
+// The panel shows newest first, so the cursor is the FIRST rendered line. Two
+// earlier bugs are pinned here:
+//
+//   - The cursor was seeded from the wrong end, so ?since= resolved near the
+//     tail of the buffer and every poll re-added the whole history.
+//   - The client appended each block, which put new lines at the bottom and
+//     produced a jumbled order once the page was scrolled.
+//
+// The delta must contain exactly the new lines, newest first, so the client can
+// prepend it verbatim.
+func TestLogPollDoesNotDuplicateOrReorder(t *testing.T) {
 	lb := newLogBuffer(500)
 	for i := 1; i <= 10; i++ {
 		lb.Write([]byte(fmt.Sprintf("2026/10/14 13:%02d:00 msg-%d", i, i)))
 	}
 
-	// What the page renders: chronological, matching handleDashboard.
-	newestFirst := lb.Lines()
-	rendered := make([]string, 0, len(newestFirst))
-	for i := len(newestFirst) - 1; i >= 0; i-- {
-		rendered = append(rendered, newestFirst[i])
-	}
-	if rendered[0] != "2026/10/14 13:01:00 msg-1" {
-		t.Fatalf("page should render oldest-first, got %q", rendered[0])
+	// What the page renders: newest first.
+	rendered := lb.Lines()
+	if rendered[0] != "2026/10/14 13:10:00 msg-10" {
+		t.Fatalf("page should render newest-first, got %q", rendered[0])
 	}
 
-	// The cursor the client seeds from the rendered panel: last line = newest.
-	cursor := rendered[len(rendered)-1]
-	if cursor != "2026/10/14 13:10:00 msg-10" {
-		t.Fatalf("cursor should be the newest line, got %q", cursor)
-	}
+	// The cursor the client seeds from the rendered panel: first line = newest.
+	cursor := rendered[0]
 
 	// Two new lines arrive.
 	lb.Write([]byte("2026/10/14 13:11:00 msg-11"))
 	lb.Write([]byte("2026/10/14 13:12:00 msg-12"))
 
-	// Recompute what /api/logs would return for that cursor.
-	newestFirst = lb.Lines()
-	all := make([]string, 0, len(newestFirst))
-	for i := len(newestFirst) - 1; i >= 0; i-- {
-		all = append(all, newestFirst[i])
-	}
-	var delta []string
+	// Recompute what /api/logs returns for that cursor.
+	all := lb.Lines()
+	idx := -1
 	for i, l := range all {
 		if l == cursor {
-			delta = all[i+1:]
+			idx = i
 			break
 		}
 	}
-	if delta == nil {
-		t.Fatal("cursor not found; /api/logs would fall back to a full send")
+	if idx < 0 {
+		t.Fatal("cursor not found; the endpoint would signal a reset")
 	}
+	delta := all[:idx]
 
 	if len(delta) != 2 {
-		t.Fatalf("expected only the 2 new lines, got %d: %v", len(delta), delta)
+		t.Fatalf("expected exactly the 2 new lines, got %d: %v", len(delta), delta)
 	}
-	if delta[0] != "2026/10/14 13:11:00 msg-11" || delta[1] != "2026/10/14 13:12:00 msg-12" {
-		t.Errorf("delta out of order or wrong: %v", delta)
+	// Newest first, matching the panel's order.
+	if delta[0] != "2026/10/14 13:12:00 msg-12" || delta[1] != "2026/10/14 13:11:00 msg-11" {
+		t.Errorf("delta not newest-first: %v", delta)
 	}
 }
 
-// TestLogAPIReturnsChronologicalOrder pins the endpoint ordering, which the
-// panel relies on when appending.
-func TestLogAPIReturnsChronologicalOrder(t *testing.T) {
+// TestLogAPIReturnsNewestFirst pins the endpoint ordering the panel relies on.
+func TestLogAPIReturnsNewestFirst(t *testing.T) {
 	s := &Server{Port: 8115}
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	// Seed the buffer with known content.
 	logBuf = newLogBuffer(50)
 	for i := 1; i <= 5; i++ {
 		logBuf.Write([]byte(fmt.Sprintf("line-%d", i)))
@@ -327,9 +399,66 @@ func TestLogAPIReturnsChronologicalOrder(t *testing.T) {
 	if len(resp.Lines) != 5 {
 		t.Fatalf("expected 5 lines, got %d", len(resp.Lines))
 	}
-	for i, want := range []string{"line-1", "line-2", "line-3", "line-4", "line-5"} {
+	for i, want := range []string{"line-5", "line-4", "line-3", "line-2", "line-1"} {
 		if resp.Lines[i] != want {
 			t.Errorf("line %d = %q, want %q", i, resp.Lines[i], want)
 		}
+	}
+}
+
+// TestLogAPIIncrementalAndReset covers both incremental and reset responses.
+func TestLogAPIIncrementalAndReset(t *testing.T) {
+	s := &Server{Port: 8115}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	logBuf = newLogBuffer(50)
+	logBuf.Write([]byte("alpha"))
+	logBuf.Write([]byte("beta"))
+
+	// Cursor on the newest line: nothing new, and crucially no duplicate.
+	req := httptest.NewRequest("GET", "/api/logs?since=beta", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+		Reset bool     `json:"reset"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Reset {
+		t.Error("a found cursor must not request a reset")
+	}
+	if len(resp.Lines) != 0 {
+		t.Errorf("expected no new lines, got %v", resp.Lines)
+	}
+
+	// A line arrives; the delta is just that line.
+	logBuf.Write([]byte("gamma"))
+	req = httptest.NewRequest("GET", "/api/logs?since=beta", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0] != "gamma" {
+		t.Errorf("expected [gamma], got %v", resp.Lines)
+	}
+
+	// An unknown cursor (scrolled out of the ring buffer) asks for a reset, so
+	// the client replaces its content instead of prepending a full copy.
+	req = httptest.NewRequest("GET", "/api/logs?since=long-gone", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Reset {
+		t.Error("an unknown cursor must set reset=true")
+	}
+	if len(resp.Lines) != 3 {
+		t.Errorf("reset should carry the full log, got %v", resp.Lines)
 	}
 }

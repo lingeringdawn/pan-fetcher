@@ -713,6 +713,27 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     <script>
       var logLastLine='';
       var logTimer=setInterval(refreshLogs,5000);
+
+      function logRender(lines){
+        // Newest first: each line becomes a row at the top, in the order given,
+        // so an incremental block lands above everything already shown without
+        // being reversed.
+        var panel=document.getElementById('log-panel');
+        var frag=document.createDocumentFragment();
+        for(var i=0;i<lines.length;i++){
+          var line=lines[i];
+          if(line.indexOf('--- [')===0){
+            var m=document.createElement('span');
+            m.className='log-clear-marker';
+            m.textContent=line;
+            frag.appendChild(m);
+          }else{
+            frag.appendChild(document.createTextNode(line+'\n'));
+          }
+        }
+        panel.insertBefore(frag,panel.firstChild);
+      }
+
       async function refreshLogs(){
         try{
           var url='/api/logs';
@@ -721,18 +742,27 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           var j=await r.json();
           if(!j.lines||j.lines.length===0)return;
           var panel=document.getElementById('log-panel');
-          // /api/logs returns oldest-first, so append in order.
-          var frag=document.createDocumentFragment();
-          for(var i=0;i<j.lines.length;i++){frag.appendChild(document.createTextNode(j.lines[i]+'\n'));}
-          panel.appendChild(frag);
-          logLastLine=j.lines[j.lines.length-1];
+          if(j.reset){
+            // The cursor scrolled out of the server's ring buffer. Replace the
+            // content instead of prepending, which would duplicate every line.
+            panel.textContent='';
+          }
+          logRender(j.lines);
+          logLastLine=j.lines[0];
         }catch(e){}
       }
-      // Seed the cursor with the last rendered line. The panel is oldest-first,
-      // so that is the newest line the client already has; using the first line
-      // made ?since= resolve near the end of the buffer, and every poll
-      // re-appended the entire history.
-      (function(){var p=document.getElementById('log-panel');if(p){var t=p.textContent.trim();if(t){var lines=t.split('\n');logLastLine=lines[lines.length-1].trim();}}})();
+
+      // Seed the cursor with the first rendered line: the panel is newest-first,
+      // so that is the most recent line the client already has. Using the oldest
+      // line instead made ?since= match near the end of the buffer, and every
+      // poll re-added the whole history.
+      (function(){
+        var p=document.getElementById('log-panel');
+        if(!p)return;
+        var t=p.textContent.trim();
+        if(!t)return;
+        logLastLine=t.split('\n')[0].trim();
+      })();
     </script>
     {{end}}
 
@@ -1716,6 +1746,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       // Show modal to add indexers from Jackett's full catalog
       var jkAllData=[];
       async function showJKAddModal(){
+        // Reset paging and filter state so reopening the modal starts fresh;
+        // otherwise it would resume mid-list from the previous visit.
+        jkAddRendered = 0;
+        jkAddFilter = '';
         showModal('{{index .T "jk_add_lib"}}',
           '<div style="margin-bottom:10px;"><input id="jk-add-filter" placeholder="{{index .T "jk_search_ph"}}" style="width:100%;padding:8px;" oninput="filterJKAddList()" autofocus></div>'+ 
           '<div id="jk-add-list" style="max-height:50vh;overflow-y:auto;">⏳ {{index .T "loading"}}</div>',
@@ -1723,30 +1757,15 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         try{
           var r=await fetch('/indexers/jackett/all');
           var j=await r.json();
-          if(!j.ok||!j.data){document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+j.msg+'</span>';return;}
+          if(!j.ok||!j.data){
+            document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+j.msg+'</span>';
+            return;
+          }
           jkAllData=j.data;
           renderJKAddList();
-        }catch(e){document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';}
-      }
-
-      function renderJKAddList(filter){
-        filter=(filter||'').toLowerCase();
-        var h='<table class="tbl"><thead><tr><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "idx_lang"}}</th><th></th></tr></thead><tbody>';
-        jkAllData.forEach(function(x){
-          if(filter&&x.name.toLowerCase().indexOf(filter)<0&&x.id.toLowerCase().indexOf(filter)<0)return;
-          h+='<tr><td>'+(x.site_link?'<a href="'+x.site_link+'" target="_blank">'+x.name+'</a>':'<strong>'+x.name+'</strong>')+'</td>';
-          h+='<td class="muted">'+(x.type||'')+'</td>';
-          h+='<td class="muted">'+(x.language||'')+'</td>';
-          h+='<td style="white-space:nowrap;">';
-          if(x.configured){
-            h+='<span style="font-size:11px;color:var(--muted);">{{index .T "configured"}}</span>';
-          }else{
-            h+='<button onclick="jkAddToJackett(\''+x.id+'\')" style="padding:2px 8px;font-size:11px;margin:0;background:var(--accent-2);">{{index .T "add"}}</button>';
-          }
-          h+='</td></tr>';
-        });
-        h+='</tbody></table>';
-        document.getElementById('jk-add-list').innerHTML=h||'<div class="hint">{{index .T "jk_no_match"}}</div>';
+        }catch(e){
+          document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+        }
       }
 
       // Rendering all ~650 indexers at once froze the modal on low-end hosts
@@ -1768,59 +1787,83 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             || x.id.toLowerCase().indexOf(jkAddFilter) >= 0;
       }
 
-      function renderJKAddList(){
+      // The table shell is built once and only rows are appended afterwards.
+      //
+      // The previous version rebuilt the whole table on every page and tried to
+      // merge pages by stripping everything before "<tbody>". That also removed
+      // the closing </tbody></table>, and the "load more" button was emitted
+      // inside that markup — so after the first append the document had an
+      // unterminated table plus a stray button, and the layout broke apart.
+      function jkAddShell(){
         var box = document.getElementById('jk-add-list');
+        if(!box) return null;
+        if(document.getElementById('jk-add-tbody')) return box;
+        box.innerHTML =
+          '<table class="tbl"><thead><tr>'
+          + '<th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th>'
+          + '<th>{{index .T "idx_lang"}}</th><th></th>'
+          + '</tr></thead><tbody id="jk-add-tbody"></tbody></table>'
+          + '<div id="jk-add-footer" style="text-align:center;padding:8px;"></div>';
+        return box;
+      }
+
+      function jkAddRow(x){
+        var h = '<tr><td>'
+          + (x.site_link
+              ? '<a href="'+x.site_link+'" target="_blank">'+x.name+'</a>'
+              : '<strong>'+x.name+'</strong>')
+          + '</td>';
+        h += '<td class="muted">'+(x.type||'')+'</td>';
+        h += '<td class="muted">'+(x.language||'')+'</td>';
+        h += '<td style="white-space:nowrap;">';
+        if(x.configured){
+          h += '<span style="font-size:11px;color:var(--muted);">{{index .T "configured"}}</span>';
+        }else{
+          h += '<button data-jk-add="'+x.id+'" style="padding:2px 8px;font-size:11px;margin:0;background:var(--accent-2);">{{index .T "add"}}</button>';
+        }
+        h += '</td></tr>';
+        return h;
+      }
+
+      function renderJKAddList(){
+        var box = jkAddShell();
         if(!box) return;
+        var tbody = document.getElementById('jk-add-tbody');
+        var footer = document.getElementById('jk-add-footer');
+
         var visible = jkAllData.filter(jkAddMatches);
         var slice = visible.slice(jkAddRendered, jkAddRendered + JK_ADD_PAGE);
+
         if(jkAddRendered === 0){
-          box.innerHTML = '';
-        }
-        if(slice.length === 0 && jkAddRendered === 0){
-          box.innerHTML = '<div class="hint">{{index .T "jk_no_match"}}</div>';
-          return;
-        }
-        var h = '';
-        if(jkAddRendered === 0){
-          h += '<table class="tbl"><thead><tr><th>{{index .T "name"}}</th><th>{{index .T "sub_type"}}</th><th>{{index .T "idx_lang"}}</th><th></th></tr></thead><tbody id="jk-add-tbody">';
-        }
-        slice.forEach(function(x){
-          h += '<tr><td>'+(x.site_link?'<a href="'+x.site_link+'" target="_blank">'+x.name+'</a>':'<strong>'+x.name+'</strong>')+'</td>';
-          h += '<td class="muted">'+(x.type||'')+'</td>';
-          h += '<td class="muted">'+(x.language||'')+'</td>';
-          h += '<td style="white-space:nowrap;">';
-          if(x.configured){
-            h += '<span style="font-size:11px;color:var(--muted);">{{index .T "configured"}}</span>';
-          }else{
-            h += '<button data-jk-add="'+x.id+'" style="padding:2px 8px;font-size:11px;margin:0;background:var(--accent-2);">{{index .T "add"}}</button>';
+          tbody.innerHTML = '';
+          if(visible.length === 0){
+            footer.innerHTML = '<div class="hint">{{index .T "jk_no_match"}}</div>';
+            return;
           }
-          h += '</td></tr>';
-        });
+        }
+
+        var h = '';
+        slice.forEach(function(x){ h += jkAddRow(x); });
+        // Append rows into the existing tbody: the table structure is never
+        // rebuilt, so nothing can end up half-closed.
+        tbody.insertAdjacentHTML('beforeend', h);
         jkAddRendered += slice.length;
 
-        // More results pending: offer a "load more" row rather than an
-        // infinite scroll handler, which needs no scroll listener and cannot
-        // fire repeatedly.
         if(jkAddRendered < visible.length){
-          h += '</tbody></table><div style="text-align:center;padding:8px;">'
-             + '<button id="jk-add-more" style="margin:0;padding:4px 14px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">'
-             + '{{index .T "loading"}} (' + jkAddRendered + '/' + visible.length + ')</button></div>';
+          footer.innerHTML = '<button id="jk-add-more" style="margin:0;padding:4px 14px;font-size:12px;'
+            + 'background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">'
+            + '{{index .T "loading"}} (' + jkAddRendered + '/' + visible.length + ')</button>';
+          var more = document.getElementById('jk-add-more');
+          if(more){ more.onclick = function(){ more.disabled = true; more.textContent = '…'; renderJKAddList(); }; }
         }else{
-          h += '</tbody></table>';
+          footer.innerHTML = '<span class="hint">' + jkAddRendered + '/' + visible.length + '</span>';
         }
-        if(jkAddRendered === slice.length){
-          box.innerHTML = h;
-        }else{
-          box.insertAdjacentHTML('beforeend', h.replace(/^.*?<tbody[^>]*>/,'')); // body only when appending
-          // Replace the trailing "load more" button with nothing; it is gone now.
-          var prev = document.getElementById('jk-add-more');
-          if(prev && jkAddRendered >= visible.length){ prev.remove(); }
-        }
-        var more = document.getElementById('jk-add-more');
-        if(more){ more.onclick = function(){ more.textContent = '…'; renderJKAddList(); }; }
-        // Wire add buttons (delegated once would need a listener; direct is fine
-        // because we rebuild the rows we just inserted).
-        box.querySelectorAll('button[data-jk-add]').forEach(function(b){
+
+        // Wire only the buttons that do not have a handler yet, so re-rendering
+        // never re-binds (or double-fires) an existing row.
+        tbody.querySelectorAll('button[data-jk-add]').forEach(function(b){
+          if(b.dataset.bound) return;
+          b.dataset.bound = '1';
           b.onclick = function(){ jkAddToJackett(b.getAttribute('data-jk-add'), b); };
         });
       }

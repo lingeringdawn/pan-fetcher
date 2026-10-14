@@ -1027,10 +1027,7 @@ func New(agent *p115pkg.Agent, port int) *Server {
 	// Anchor all runtime files to the data directory before anything reads them.
 	// Without this the sidecar files resolve against the process working
 	// directory, which self-update changes on restart.
-	dataDir = s.dataDir()
-	dedupCachePath = resolveDataFile("dedup-cache.json")
-	rssJsonPath = resolveDataFile("rss.json")
-	searchCacheFile = resolveDataFile("search-cache.json")
+	InitDataDir(s.databasePathAbs())
 	// Pre-load Jackett settings from web-settings.json
 	ws := s.loadWebSettings()
 	s.JackettURL = ws.JackettURL
@@ -2342,13 +2339,9 @@ func (s *Server) handleTorrentClear(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogPage(w http.ResponseWriter, r *http.Request) {
 	data := s.pageData("", "")
 	data.Page = "log"
-	// The log panel reads oldest-first, matching a normal log view and the
-	// /api/logs ordering.
-	newestFirst := logBuf.Lines()
-	data.Logs = make([]string, 0, len(newestFirst))
-	for i := len(newestFirst) - 1; i >= 0; i-- {
-		data.Logs = append(data.Logs, newestFirst[i])
-	}
+	// The log panel shows newest first, matching /api/logs, so the client can
+	// prepend incremental blocks without reordering anything.
+	data.Logs = logBuf.Lines()
 	dashboardTemplate.Execute(w, data)
 }
 
@@ -2727,9 +2720,11 @@ func applyKeywordFilter(results []indexer.SearchResult, keyword string) []indexe
 
 // handleAPILogs serves log lines for the live log panel.
 //
-// Lines are returned oldest-first so the panel reads top-to-bottom. The `since`
-// marker names the newest line the client already has; only lines after it are
-// returned, so a poll never re-sends history the client already rendered.
+// Lines are returned newest-first, matching the panel's display order, so the
+// client can prepend an incremental block verbatim.
+//
+// The `since` marker names the newest line the client already has. Everything
+// before it in the buffer is newer, and is returned as-is.
 //
 // The marker is matched by content, not index: log lines are not unique (a
 // recurring message such as "no enabled subscriptions" repeats verbatim), so an
@@ -2737,35 +2732,39 @@ func applyKeywordFilter(results []indexer.SearchResult, keyword string) []indexe
 func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Lines() is newest-first; reverse for chronological output.
-	newestFirst := logBuf.Lines()
-	all := make([]string, 0, len(newestFirst))
-	for i := len(newestFirst) - 1; i >= 0; i-- {
-		all = append(all, newestFirst[i])
-	}
+	// Already newest-first.
+	all := logBuf.Lines()
 
 	since := r.URL.Query().Get("since")
-	var lines []string
+	resp := map[string]interface{}{}
+
 	if since == "" {
-		lines = all
+		resp["lines"] = all
 	} else {
-		// Walk oldest-forward and take everything after the marked line.
+		idx := -1
 		for i, l := range all {
 			if l == since {
-				lines = all[i+1:]
+				idx = i
 				break
 			}
 		}
-		// Marker not found (buffer wrapped past it, or a stale cursor): fall
-		// back to a full send rather than silently returning nothing.
-		if lines == nil {
-			lines = all
+		switch {
+		case idx < 0:
+			// The marker scrolled out of the ring buffer, or the client is
+			// stale. Send the whole log and flag it, so the client replaces
+			// its content: prepending here would duplicate every line.
+			resp["lines"] = all
+			resp["reset"] = true
+		case idx == 0:
+			// Nothing new since the last poll. Returning an empty slice keeps
+			// the client from re-adding the line it already shows.
+			resp["lines"] = []string{}
+		default:
+			resp["lines"] = all[:idx]
 		}
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"lines": lines,
-	})
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
@@ -4085,6 +4084,33 @@ func (s *Server) databasePathAbs() string {
 		return dbPath
 	}
 	return abs
+}
+
+// InitDataDir anchors every runtime file to the directory holding dbPath and
+// returns that directory.
+//
+// It must run before anything reads or writes a sidecar file. New() calls it,
+// but the login password is loaded even earlier (the password gates every
+// handler, so it has to be in place before the server is constructed). That
+// ordering bug meant LoadPersistedPassword resolved web-settings.json against
+// the process working directory: after a self-update restarted the server with
+// its working directory set to the binary's folder, the file was not found and
+// the panel silently came back with no password at all.
+func InitDataDir(dbPath string) string {
+	if strings.TrimSpace(dbPath) == "" {
+		dbPath = "db.sqlite"
+	}
+	abs, err := filepath.Abs(dbPath)
+	if err != nil {
+		abs = dbPath
+	}
+	dataDir = filepath.Dir(abs)
+
+	// Re-resolve the package-level paths that were captured at init time.
+	dedupCachePath = resolveDataFile("dedup-cache.json")
+	rssJsonPath = resolveDataFile("rss.json")
+	searchCacheFile = resolveDataFile("search-cache.json")
+	return dataDir
 }
 
 // dataDir is the directory holding all runtime state: the database and the
