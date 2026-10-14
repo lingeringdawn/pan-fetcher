@@ -721,15 +721,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           var j=await r.json();
           if(!j.lines||j.lines.length===0)return;
           var panel=document.getElementById('log-panel');
-          var first=j.lines[0];
-          // Append new lines at bottom
+          // /api/logs returns oldest-first, so append in order.
           var frag=document.createDocumentFragment();
           for(var i=0;i<j.lines.length;i++){frag.appendChild(document.createTextNode(j.lines[i]+'\n'));}
           panel.appendChild(frag);
           logLastLine=j.lines[j.lines.length-1];
         }catch(e){}
       }
-      (function(){var p=document.getElementById('log-panel');if(p){var t=p.textContent.trim();if(t){var lines=t.split('\n');logLastLine=lines[0].trim();}}})();
+      // Seed the cursor with the last rendered line. The panel is oldest-first,
+      // so that is the newest line the client already has; using the first line
+      // made ?since= resolve near the end of the buffer, and every poll
+      // re-appended the entire history.
+      (function(){var p=document.getElementById('log-panel');if(p){var t=p.textContent.trim();if(t){var lines=t.split('\n');logLastLine=lines[lines.length-1].trim();}}})();
     </script>
     {{end}}
 
@@ -1519,18 +1522,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             html+='<code style="font-size:11px;color:var(--muted);cursor:pointer;" onclick="browseCallback(\''+e.id+'\')" title="选定此目录">'+e.id+'</code></div>';
           });
           html+='</div>';
-          updateBrowseModal('{{index .T "select_dir_title"}}'.replace('%s',pid),html,pid);
-        }catch(e){showModal('{{index .T "error_label"}}','<p>'+e.message+'</p>');}
+          updateBrowseModal('{{index $.T "select_dir_title"}}'.replace('%s',pid),html,pid);
+        }catch(e){showModal('{{index $.T "error_label"}}','<p>'+e.message+'</p>');}
       }
       function updateBrowseModal(title,body,pid){
         document.getElementById('g-modal-title').textContent=title;
         var subdirHTML='';
         if(window._browseShowSubdir){
-          subdirHTML='<div style="margin-top:10px;"><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">{{index .T "subdir_opt"}}:</label><input id="browse-subdir" type="text" placeholder="{{index .T "subdir_opt"}}" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 10px;"></div>';
+          subdirHTML='<div style="margin-top:10px;"><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">{{index $.T "subdir_opt"}}:</label><input id="browse-subdir" type="text" placeholder="{{index $.T "subdir_opt"}}" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 10px;"></div>';
         }
         document.getElementById('g-modal-body').innerHTML=body+subdirHTML;
         var btns=document.getElementById('g-modal-btns');
-        btns.innerHTML='<button onclick="browseCallback(\''+pid+'\')" style="margin:0;padding:6px 16px;background:var(--accent-2);">{{index .T "select_current_dir"}}</button><button onclick="closeModal()" style="margin:0;padding:6px 16px;background:var(--danger);">{{index .T "close_btn"}}</button>';
+        btns.innerHTML='<button onclick="browseCallback(\''+pid+'\')" style="margin:0;padding:6px 16px;background:var(--accent-2);">{{index $.T "select_current_dir"}}</button><button onclick="closeModal()" style="margin:0;padding:6px 16px;background:var(--danger);">{{index $.T "close_btn"}}</button>';
         document.getElementById('g-modal').style.display='flex';
       }
     </script>
@@ -1557,7 +1560,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           <td class="muted" style="font-size:11px;">{{.ID}}</td>
           <td class="muted">{{.Language}}</td>
           <td style="white-space:nowrap;">
-            <button onclick="jkDeactivate('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="{{index .T "remove"}}">−</button>
+            <button onclick="jkDeactivate('{{.ID}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--danger);" title="{{index $.T "remove"}}">−</button>
           </td>
         </tr>{{end}}
         </tbody>

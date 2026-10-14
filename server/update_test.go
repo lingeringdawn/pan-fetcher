@@ -1,11 +1,17 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/lingeringdawn/pan-fetcher/indexer"
 	"github.com/lingeringdawn/pan-fetcher/notify"
 )
 
@@ -162,5 +168,168 @@ func TestNotifySetDataDir(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dir, "recent-items.json")); err != nil {
 		t.Fatalf("recent-items.json not written under data dir: %v", err)
+	}
+}
+
+// renderIndexersPage executes the dashboard template for the indexers page.
+// Execute errors are fatal here: the production handler discards the return
+// value, so a mid-template failure leaves a truncated page with no trace.
+func renderIndexersPage(t *testing.T, list []indexer.IndexerInfo) string {
+	t.Helper()
+	s := &Server{Port: 8115}
+	data := s.pageData("", "")
+	data.Page = "indexers"
+	data.IndexerList = list
+
+	var buf bytes.Buffer
+	if err := dashboardTemplate.Execute(&buf, data); err != nil {
+		t.Fatalf("dashboardTemplate.Execute: %v", err)
+	}
+	return buf.String()
+}
+
+// TestIndexersPageRendersWithActiveList is the regression test for the live
+// deployment showing a truncated indexers page.
+//
+// The Jackett "remove" button lives inside {{range .IndexerList}}, where the
+// dot is an IndexerInfo. It referenced {{index .T "remove"}}, but IndexerInfo
+// has no T field, so rendering aborted mid-row and everything after the
+// button's title attribute was lost — including the whole <script> block that
+// defines apiPost, renderJKSetup and the rest. The page therefore stuck on
+// "加载中…" and no indexers could be activated.
+//
+// The same class of bug affected updateBrowseModal, which is also defined
+// inside the range.
+func TestIndexersPageRendersWithActiveList(t *testing.T) {
+	list := []indexer.IndexerInfo{
+		{ID: "nyaasi", Name: "Nyaasi", Type: "public", Language: "en-US", SiteLink: "https://nyaa.si/", Enabled: true, Source: "jackett"},
+		{ID: "dmhy", Name: "dmhy", Type: "public", Language: "zh-TW", SiteLink: "https://share.dmhy.org/", Enabled: true, Source: "jackett"},
+		{ID: "mikan", Name: "Mikan Project", Type: "public", Language: "zh-CN", SiteLink: "https://mikanani.me/", Enabled: true, Source: "jackett"},
+	}
+	out := renderIndexersPage(t, list)
+
+	// The page must reach its end, not stop part-way through a table row.
+	if !strings.HasSuffix(strings.TrimSpace(out), "</html>") {
+		t.Fatalf("page is truncated (%d bytes); it must end with </html>", len(out))
+	}
+
+	for _, mark := range []string{
+		"apiPost",             // the script block after the table
+		"renderJKSetup",       // setup panel renderer
+		"Jackett 索引器库",      // the async library panel
+		"showJKAddModal",      // add-to-library modal
+		"jk-setup-body",       // setup panel target
+		"updateBrowseModal",   // also defined inside the range
+		"jkDeactivate('dmhy')", // the button that used to abort rendering
+	} {
+		if !strings.Contains(out, mark) {
+			t.Errorf("rendered page is missing %q", mark)
+		}
+	}
+}
+
+// TestIndexersPageRendersEmptyList guards the other branch of the same block.
+func TestIndexersPageRendersEmptyList(t *testing.T) {
+	out := renderIndexersPage(t, nil)
+
+	if !strings.HasSuffix(strings.TrimSpace(out), "</html>") {
+		t.Fatalf("page is truncated (%d bytes)", len(out))
+	}
+	for _, mark := range []string{"apiPost", "renderJKSetup", "Jackett 索引器库"} {
+		if !strings.Contains(out, mark) {
+			t.Errorf("rendered page is missing %q", mark)
+		}
+	}
+}
+
+// TestLogPollDoesNotDuplicate covers the live log panel re-rendering the whole
+// history on every poll.
+//
+// The panel is oldest-first, so the cursor must be seeded with the LAST
+// rendered line (the newest one). It used to take the first line, which is the
+// oldest, and /api/logs then resolved the marker near the end of the buffer and
+// returned nearly every line again — the client appended them all, so the panel
+// grew a full copy of the log every 5 seconds.
+func TestLogPollDoesNotDuplicate(t *testing.T) {
+	lb := newLogBuffer(500)
+	for i := 1; i <= 10; i++ {
+		lb.Write([]byte(fmt.Sprintf("2026/10/14 13:%02d:00 msg-%d", i, i)))
+	}
+
+	// What the page renders: chronological, matching handleDashboard.
+	newestFirst := lb.Lines()
+	rendered := make([]string, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		rendered = append(rendered, newestFirst[i])
+	}
+	if rendered[0] != "2026/10/14 13:01:00 msg-1" {
+		t.Fatalf("page should render oldest-first, got %q", rendered[0])
+	}
+
+	// The cursor the client seeds from the rendered panel: last line = newest.
+	cursor := rendered[len(rendered)-1]
+	if cursor != "2026/10/14 13:10:00 msg-10" {
+		t.Fatalf("cursor should be the newest line, got %q", cursor)
+	}
+
+	// Two new lines arrive.
+	lb.Write([]byte("2026/10/14 13:11:00 msg-11"))
+	lb.Write([]byte("2026/10/14 13:12:00 msg-12"))
+
+	// Recompute what /api/logs would return for that cursor.
+	newestFirst = lb.Lines()
+	all := make([]string, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		all = append(all, newestFirst[i])
+	}
+	var delta []string
+	for i, l := range all {
+		if l == cursor {
+			delta = all[i+1:]
+			break
+		}
+	}
+	if delta == nil {
+		t.Fatal("cursor not found; /api/logs would fall back to a full send")
+	}
+
+	if len(delta) != 2 {
+		t.Fatalf("expected only the 2 new lines, got %d: %v", len(delta), delta)
+	}
+	if delta[0] != "2026/10/14 13:11:00 msg-11" || delta[1] != "2026/10/14 13:12:00 msg-12" {
+		t.Errorf("delta out of order or wrong: %v", delta)
+	}
+}
+
+// TestLogAPIReturnsChronologicalOrder pins the endpoint ordering, which the
+// panel relies on when appending.
+func TestLogAPIReturnsChronologicalOrder(t *testing.T) {
+	s := &Server{Port: 8115}
+	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+
+	// Seed the buffer with known content.
+	logBuf = newLogBuffer(50)
+	for i := 1; i <= 5; i++ {
+		logBuf.Write([]byte(fmt.Sprintf("line-%d", i)))
+	}
+
+	req := httptest.NewRequest("GET", "/api/logs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp struct {
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Lines) != 5 {
+		t.Fatalf("expected 5 lines, got %d", len(resp.Lines))
+	}
+	for i, want := range []string{"line-1", "line-2", "line-3", "line-4", "line-5"} {
+		if resp.Lines[i] != want {
+			t.Errorf("line %d = %q, want %q", i, resp.Lines[i], want)
+		}
 	}
 }

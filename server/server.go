@@ -2333,7 +2333,13 @@ func (s *Server) handleTorrentClear(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogPage(w http.ResponseWriter, r *http.Request) {
 	data := s.pageData("", "")
 	data.Page = "log"
-	data.Logs = logBuf.Lines()
+	// The log panel reads oldest-first, matching a normal log view and the
+	// /api/logs ordering.
+	newestFirst := logBuf.Lines()
+	data.Logs = make([]string, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		data.Logs = append(data.Logs, newestFirst[i])
+	}
 	dashboardTemplate.Execute(w, data)
 }
 
@@ -2710,27 +2716,44 @@ func applyKeywordFilter(results []indexer.SearchResult, keyword string) []indexe
 	return filtered
 }
 
+// handleAPILogs serves log lines for the live log panel.
+//
+// Lines are returned oldest-first so the panel reads top-to-bottom. The `since`
+// marker names the newest line the client already has; only lines after it are
+// returned, so a poll never re-sends history the client already rendered.
+//
+// The marker is matched by content, not index: log lines are not unique (a
+// recurring message such as "no enabled subscriptions" repeats verbatim), so an
+// index-based cursor would jump to the wrong place once the buffer wrapped.
 func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// Lines() is newest-first; reverse for chronological output.
+	newestFirst := logBuf.Lines()
+	all := make([]string, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		all = append(all, newestFirst[i])
+	}
+
 	since := r.URL.Query().Get("since")
 	var lines []string
 	if since == "" {
-		lines = logBuf.Lines()
+		lines = all
 	} else {
-		// Return only lines after the given marker
-		allLines := logBuf.Lines()
-		found := false
-		for _, l := range allLines {
-			if found {
-				lines = append(lines, l)
-			} else if strings.Contains(l, since) {
-				found = true
+		// Walk oldest-forward and take everything after the marked line.
+		for i, l := range all {
+			if l == since {
+				lines = all[i+1:]
+				break
 			}
 		}
-		if !found {
-			lines = allLines
+		// Marker not found (buffer wrapped past it, or a stale cursor): fall
+		// back to a full send rather than silently returning nothing.
+		if lines == nil {
+			lines = all
 		}
 	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"lines": lines,
 	})
