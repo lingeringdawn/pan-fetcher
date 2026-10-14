@@ -14,11 +14,14 @@
 - 解压过程对归档路径做穿越校验，含 `../` 或绝对路径的条目会直接判为非法并中止安装。
 - `Start` 会返回实际应答的地址。Jackett 从用户配置目录而非安装目录读取端口，因此请求的端口未必生效，调用方必须采用返回的地址。
 - 新增 `jackett/install_e2e_test.go`：用真实发行包验证下载、解压、可执行文件定位、启动与探测全链路，需 `JACKETT_E2E=1` 启用。
+- 新增 `jackett/discovery_e2e_test.go`：让 Jackett 自行生成配置，验证自动检测读出的 API Key 能真正通过 Torznab 认证，而非仅断言字符串非空。
 - 新增 `jackett/detach_test.go`：实际派生进程校验子进程分离标志，防止 `Setsid`/`Setpgid` 互斥问题回归。
+- 新增 `jackett/client_test.go`：覆盖 Torznab 错误文档识别。
 
 ### 修复
 - 设置页改为「提交哪些字段就只改哪些字段」：此前一次部分提交（如自动检测只回填 URL）会把未提交的 Jackett API Key、TMDB Key 等一并清空。
 - 一键安装的可执行文件名此前假设为 `Jackett` / `Jackett.exe`，实际 Linux 归档中是小写的 `jackett`，导致安装后无法启动。
+- **API Key 校验形同虚设**：Jackett 对无效密钥返回的是 **HTTP 200 + `<error code="100" description="Invalid API Key" />`**，而非 401。原实现只检查状态码，因此填错 API Key 时：设置页「测试连接」会误报成功；索引器列表与搜索结果会静默显示为空，看起来像"没有索引器/没有资源"。现统一解析响应体识别错误文档，`Test`、`ListIndexers`、`ListAllIndexers`、`Search` 四处均生效。
 - **子进程分离标志互斥（真实 Linux 上功能完全不可用）**：`SysProcAttr` 同时设置 `Setsid` 与 `Setpgid` 会让 `fork/exec` 返回 `EPERM`——`setsid(2)` 使子进程成为会话首进程，`setpgid(2)` 随即拒绝它。这导致一键安装启动 Jackett 与自更新重启均失败。现只保留 `Setsid`（它本身已创建新进程组），并新增回归测试实际派生进程验证。
 - **Jackett 探测判据失效**：`/UI/Login` 返回 302 且响应体为空，而探测要求正文含 "jackett"，故永远判定失败，`Start` 会一直等到 90 秒超时。现同时识别 Jackett 特有指纹（`Set-Cookie: TestCookie`、`Server: Kestrel`、重定向至 `/UI/`），不再单纯依赖页面正文。
 - **监听地址可能不可拨**：Kestrel 报告 `http://[::]:port`，但该地址常无法连接而 IPv4 回环可用。`Start` 现将日志中的监听地址与两种回环地址一并作为候选，并优先使用 IPv4。

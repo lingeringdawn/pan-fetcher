@@ -2,6 +2,7 @@
 package jackett
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -187,7 +188,57 @@ type enclosure struct {
 	Type string `xml:"type,attr"`
 }
 
-// Test verifies the Jackett connection by hitting the indexers endpoint.
+// torznabError is the XML body Jackett returns for API-level failures.
+//
+// Jackett reports a bad API key as HTTP 200 with
+//
+//	<?xml version="1.0" encoding="UTF-8"?>
+//	<error code="100" description="Invalid API Key" />
+//
+// and the same is true for other request errors. Checking the status code alone
+// therefore cannot tell a valid key from an invalid one, so callers must inspect
+// the body.
+type torznabError struct {
+	XMLName     xml.Name `xml:"error"`
+	Code        int      `xml:"code,attr"`
+	Description string   `xml:"description,attr"`
+}
+
+// checkTorznabBody reports an API-level error carried in a 200 response.
+//
+// Only the leading bytes are inspected: a successful response starts with
+// <caps>, <indexers> or <rss>, whereas an error document is a single small
+// element, so a truncated read is enough to classify it without buffering whole
+// result feeds.
+func checkTorznabBody(body []byte) error {
+	trimmed := bytes.TrimSpace(body)
+	// Strip the XML declaration if present.
+	if bytes.HasPrefix(trimmed, []byte("<?xml")) {
+		if i := bytes.Index(trimmed, []byte("?>")); i >= 0 {
+			trimmed = bytes.TrimSpace(trimmed[i+2:])
+		}
+	}
+	if !bytes.HasPrefix(trimmed, []byte("<error")) {
+		return nil
+	}
+	var e torznabError
+	if err := xml.Unmarshal(trimmed, &e); err != nil {
+		return fmt.Errorf("jackett 返回错误响应")
+	}
+	desc := strings.TrimSpace(e.Description)
+	if desc == "" {
+		desc = "unknown error"
+	}
+	if e.Code == 100 || strings.Contains(strings.ToLower(desc), "api key") {
+		return fmt.Errorf("API Key 无效：%s", desc)
+	}
+	return fmt.Errorf("Jackett 返回错误 (code %d)：%s", e.Code, desc)
+}
+
+// Test verifies the Jackett connection and that the API key is accepted.
+//
+// A reachable-but-unauthorised instance answers 200 just like a healthy one, so
+// the response body is validated rather than only the status code.
 func Test(cfg Config) error {
 	u, err := url.Parse(strings.TrimRight(cfg.URL, "/") + "/api/v2.0/indexers/all/results/torznab/api")
 	if err != nil {
@@ -211,82 +262,47 @@ func Test(cfg Config) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if err := checkTorznabBody(body); err != nil {
+		return err
+	}
+	// A valid caps document names the server; its absence means we are talking to
+	// something that is not a Torznab implementation.
+	if !bytes.Contains(body, []byte("<caps")) {
+		return fmt.Errorf("响应不是 Torznab caps 文档，请确认地址指向 Jackett")
+	}
 	return nil
 }
 
-// ListIndexers returns all configured indexers from a Jackett/Prowlarr instance
-// using the Torznab t=indexers API (XML), which works with API key auth.
-func ListIndexers(cfg Config) ([]IndexerInfo, error) {
-	u, err := url.Parse(strings.TrimRight(cfg.URL, "/") + "/api/v2.0/indexers/all/results/torznab/api")
-	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
-	}
-	q := u.Query()
-	q.Set("apikey", cfg.APIKey)
-	q.Set("t", "indexers")
-	q.Set("configured", "true")
-	u.RawQuery = q.Encode()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("connection failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	// Parse XML response
-	type idxXML struct {
-		XMLName     xml.Name `xml:"indexer"`
-		ID          string   `xml:"id,attr"`
-		Configured  string   `xml:"configured,attr"`
-		Title       string   `xml:"title"`
-		Description string   `xml:"description"`
-		Link        string   `xml:"link"`
-		Language    string   `xml:"language"`
-		Type        string   `xml:"type"`
-	}
-	type indexersXML struct {
-		XMLName  xml.Name `xml:"indexers"`
-		Indexers []idxXML `xml:"indexer"`
-	}
-
-	var data indexersXML
-	if err := xml.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("xml decode: %w", err)
-	}
-
-	var indexers []IndexerInfo
-	for _, idx := range data.Indexers {
-		if idx.Configured != "true" {
-			continue // only show configured indexers
-		}
-		indexers = append(indexers, IndexerInfo{
-			ID:          idx.ID,
-			Name:        idx.Title,
-			SiteLink:    idx.Link,
-			Language:    idx.Language,
-			Type:        idx.Type,
-			Description: idx.Description,
-			Status:      1,
-		})
-	}
-	return indexers, nil
+// indexerXML mirrors one <indexer> element of the Torznab t=indexers response.
+type indexerXML struct {
+	XMLName     xml.Name `xml:"indexer"`
+	ID          string   `xml:"id,attr"`
+	Configured  string   `xml:"configured,attr"`
+	Title       string   `xml:"title"`
+	Description string   `xml:"description"`
+	Link        string   `xml:"link"`
+	Language    string   `xml:"language"`
+	Type        string   `xml:"type"`
 }
 
-// ListAllIndexers returns ALL indexers (including unconfigured) from a Jackett instance.
-func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
+// indexersXML is the document returned by t=indexers.
+type indexersXML struct {
+	XMLName  xml.Name     `xml:"indexers"`
+	Indexers []indexerXML `xml:"indexer"`
+}
+
+// fetchIndexers implements the shared t=indexers request used by both the
+// "configured only" and "all indexers" listings.
+//
+// An invalid API key is reported by Jackett as HTTP 200 carrying an <error>
+// document, so the body is validated rather than the status code alone;
+// otherwise a wrong key would silently look like "no indexers configured".
+func fetchIndexers(cfg Config, configuredOnly bool) ([]IndexerInfo, error) {
 	u, err := url.Parse(strings.TrimRight(cfg.URL, "/") + "/api/v2.0/indexers/all/results/torznab/api")
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
@@ -294,7 +310,9 @@ func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
 	q := u.Query()
 	q.Set("apikey", cfg.APIKey)
 	q.Set("t", "indexers")
-	// No configured filter — return all
+	if configuredOnly {
+		q.Set("configured", "true")
+	}
 	u.RawQuery = q.Encode()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -316,28 +334,24 @@ func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	type idxXML struct {
-		XMLName     xml.Name `xml:"indexer"`
-		ID          string   `xml:"id,attr"`
-		Configured  string   `xml:"configured,attr"`
-		Title       string   `xml:"title"`
-		Description string   `xml:"description"`
-		Link        string   `xml:"link"`
-		Language    string   `xml:"language"`
-		Type        string   `xml:"type"`
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
 	}
-	type indexersXML struct {
-		XMLName  xml.Name `xml:"indexers"`
-		Indexers []idxXML `xml:"indexer"`
+	if err := checkTorznabBody(body); err != nil {
+		return nil, err
 	}
 
 	var data indexersXML
-	if err := xml.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := xml.Unmarshal(body, &data); err != nil {
 		return nil, fmt.Errorf("xml decode: %w", err)
 	}
 
 	var indexers []IndexerInfo
 	for _, idx := range data.Indexers {
+		if configuredOnly && idx.Configured != "true" {
+			continue
+		}
 		indexers = append(indexers, IndexerInfo{
 			ID:          idx.ID,
 			Name:        idx.Title,
@@ -350,6 +364,16 @@ func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
 		})
 	}
 	return indexers, nil
+}
+
+// ListIndexers returns the configured indexers of a Jackett instance.
+func ListIndexers(cfg Config) ([]IndexerInfo, error) {
+	return fetchIndexers(cfg, true)
+}
+
+// ListAllIndexers returns every known indexer, configured or not.
+func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
+	return fetchIndexers(cfg, false)
 }
 
 // Search queries a Jackett/Prowlarr instance and returns parsed results.
@@ -394,6 +418,12 @@ func Search(cfg Config, query string, categories []int, offset int) ([]Result, e
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("jackett read: %w", err)
+	}
+	// Jackett answers an unauthorised search with HTTP 200 and an <error>
+	// document. Without this check the unmarshal below would succeed with zero
+	// items, silently presenting "no results" for a bad API key.
+	if err := checkTorznabBody(data); err != nil {
+		return nil, err
 	}
 
 	var rssData rss
