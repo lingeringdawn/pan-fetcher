@@ -99,6 +99,13 @@ func TestUpdateWriteErrorOther(t *testing.T) {
 // bare relative name, so afterwards they resolved against the new directory:
 // web-settings.json was not found and the Jackett URL and API key came back
 // empty, which looked like the connection had broken.
+//
+// The deeper cause was the working directory switch itself: with cwd moved to
+// the binary folder, config.toml was no longer found, so the database path fell
+// back to a default beside the binary and the data directory moved with it.
+// doRestart now keeps the original working directory, and runtime files are
+// additionally anchored to the data directory so a cwd change cannot silently
+// relocate them again.
 func TestResolveDataFileIgnoresWorkingDir(t *testing.T) {
 	stateDir := t.TempDir()
 	exeDir := t.TempDir()

@@ -3,7 +3,7 @@
 ## v2.0.2
 
 ### 修复
-- **自更新后 Jackett 连接丢失**：所有运行时文件（`web-settings.json`、`jackett-enabled.json`、`rss.json`、`dedup-cache.json`、`search-cache.json`、`recent-items.json`、`saved-searches.json`）此前都是裸相对路径，依赖进程工作目录。自更新的重启逻辑会把工作目录设为二进制所在目录，于是这些文件改从那里解析：`web-settings.json` 读不到，Jackett 的地址与 API Key 变成空值，表现为"更新后连接异常"。现统一锚定到数据库所在目录，重启后配置保持。
+- **自更新后 Jackett 连接丢失**（根因）：自更新与手动重启都会把子进程的工作目录设为二进制所在目录（`cmd.Dir = filepath.Dir(exe)`）。工作目录一变，`config.toml` 便不再被找到，数据库路径退回到二进制旁的默认值，数据目录随之整体迁移——`web-settings.json` 读不到，Jackett 的地址与 API Key 变成空值，表现为"更新后连接异常"。现重启时保持原工作目录，并将所有运行时文件锚定到数据库所在目录。
 - **`compareVersion` 误判预发布版本**：解析用 `strconv.Atoi` 且忽略错误，`"1-rc1"` 变成 0，导致 `v2.0.1-rc1` 与 `v2.0.0` 比较相等，更新提示被隐藏。现理解 `-rc`/`-beta` 等后缀，正式版高于其自身预发布版；无法解析的输入不再伪装成合法版本。
 
 ### 变更

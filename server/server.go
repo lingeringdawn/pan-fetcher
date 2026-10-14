@@ -2903,7 +2903,9 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 			args = append(args, a)
 		}
 		cmd := exec.Command(exe, args...)
-		cmd.Dir = filepath.Dir(exe)
+		// Keep the current working directory; see doRestart for why it must not
+		// be switched to the binary's folder.
+		cmd.Dir = ""
 		// Detach into a new session so the replacement process survives our exit
 		// and is not tied to this process's controlling terminal. Setsid also
 		// creates a new process group; adding Setpgid would fail with EPERM
@@ -3191,7 +3193,15 @@ func doRestart() {
 		args = append(args, a)
 	}
 	cmd := exec.Command(exe, args...)
-	cmd.Dir = filepath.Dir(exe)
+	// Keep the current working directory.
+	//
+	// It used to be set to the binary's folder, which broke every relative path
+	// in the new process: config.toml was no longer found, so the database path
+	// fell back to a default beside the binary and the data directory (and with
+	// it web-settings.json and the Jackett connection) moved out from under the
+	// deployment. Leaving the working directory alone preserves whatever the
+	// service manager or operator established.
+	cmd.Dir = ""
 	// Detach into a new session so the replacement process survives our exit.
 	// Setsid also creates a new process group; Setpgid must not be combined with
 	// it, since setpgid(2) rejects a session leader with EPERM.
