@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.6
+
+### 修复
+- **索引器库报 JSON 解析错误**：部分接口用字符串拼接构造 JSON 响应，把错误信息直接插进 JSON 字符串里。错误信息含引号时（例如 `Get "http://...": context deadline exceeded`）会提前终止字符串，响应体不再合法，界面只能显示 `Expected ',' or '}' after property value in JSON at position 43` 这类解析错误，而看不到真正的原因。现改为统一经 JSON 编码输出，共修正 9 处（Jackett 索引器列表与添加、连接测试、离线任务提交、二维码登录、目录浏览、订阅执行、批量启停）。
+
 ## v2.0.5
 
 ### 修复

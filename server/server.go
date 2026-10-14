@@ -1668,14 +1668,14 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 	task, err := decodeOfflineTask(r)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"error","message":"%s"}`, err.Error())
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "error", "message": err.Error()})
 		return
 	}
 	err = s.Agent.AddMagnetTask(task.Tasks, task.Cid, task.SavePath)
 	if err != nil {
 		log.Printf("[task] web submit failed: %v", err)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"error","message":"%s"}`, err.Error())
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "error", "message": err.Error()})
 		return
 	}
 	log.Printf("[task] web submitted %d tasks, cid=%s", len(task.Tasks), task.Cid)
@@ -2821,7 +2821,7 @@ func (s *Server) handleQRLogin(w http.ResponseWriter, r *http.Request) {
 		img, err := p115pkg.StartQrcodeLogin()
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"error":"%s"}`, err.Error())
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -2832,13 +2832,13 @@ func (s *Server) handleQRLogin(w http.ResponseWriter, r *http.Request) {
 		success, err := p115pkg.PollQrcodeLogin()
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
-			fmt.Fprintf(w, `{"status":"%s"}`, err.Error())
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": err.Error()})
 			return
 		}
 		if success {
 			newAgent, err := p115pkg.FinishQrcodeLogin()
 			if err != nil {
-				fmt.Fprintf(w, `{"error":"%s"}`, err.Error())
+				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
 				return
 			}
 			s.SetAgent(newAgent)
@@ -2905,7 +2905,7 @@ func (s *Server) handleTest115(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Agent.TestConnection(); err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
 	fmt.Fprintf(w, `{"ok":true,"msg":"%s"}`, tr(s.langFromAgent(), "conn_ok"))
@@ -3781,7 +3781,10 @@ func (s *Server) handleJackettAll(w http.ResponseWriter, r *http.Request) {
 	}
 	all, err := jackett.ListAllIndexers(s.jackettConfig())
 	if err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+		// Encode through json rather than Fprintf: Jackett errors contain
+		// quotes (e.g. Get "http://...": deadline exceeded), which broke the
+		// response body and surfaced in the UI as a JSON parse error.
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
 	data, _ := json.Marshal(all)
@@ -3802,7 +3805,8 @@ func (s *Server) handleJackettAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	jc := s.jackettConfig()
 	if err := jackett.AddIndexer(jc, id); err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+		// Encoded via json so quotes in the error cannot corrupt the body.
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
 	log.Printf("[jackett] added indexer: %s", id)
@@ -4475,7 +4479,11 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
 		w.Header().Set("Content-Type", "application/json")
 		lang := s.langFromAgent()
-		fmt.Fprintf(w, `{"ok":true,"msg":"%s"}`, trf(lang, "subs_processing_fmt", rssURL))
+		// rssURL is user-supplied and may contain quotes; encode it properly.
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":  true,
+			"msg": trf(lang, "subs_processing_fmt", rssURL),
+		})
 		return
 	}
 	http.Redirect(w, r, "/subs", http.StatusSeeOther)
@@ -4502,7 +4510,10 @@ func (s *Server) handleSubsToggleAll(w http.ResponseWriter, r *http.Request) {
 		msg = tr(lang, "enable_all")
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"msg":"%s"}`, msg+" "+tr(lang, "settings_saved"))
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":  true,
+		"msg": msg + " " + tr(lang, "settings_saved"),
+	})
 }
 
 // handleDedupClearAll clears the entire deduplication cache.
@@ -4531,7 +4542,7 @@ func (s *Server) handleSubsDirs(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.Agent.ListDir(parentID)
 	if err != nil {
-		fmt.Fprintf(w, `{"ok":false,"msg":"%s"}`, err.Error())
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
 	// Get actual parent of this directory for ".." navigation
