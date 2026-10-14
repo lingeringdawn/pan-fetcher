@@ -1091,19 +1091,28 @@ func (s *Server) LoadProxyConfig() {
 }
 
 // httpClient returns an HTTP client that respects the configured proxy.
+// httpClient returns the HTTP client used for outbound calls to GitHub and
+// Jackett.
+//
+// http.DefaultClient has no timeout, so a hung peer would block a request
+// handler indefinitely. The shared client below always carries one; returning
+// the default would silently drop that guarantee whenever no proxy is set.
 func (s *Server) httpClient() *http.Client {
 	if s.ProxyHTTP == "" {
-		return http.DefaultClient
+		return sharedHTTPClient
 	}
 	proxyURL, err := url.Parse(s.ProxyHTTP)
 	if err != nil {
-		return http.DefaultClient
+		return sharedHTTPClient
 	}
 	return &http.Client{
 		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
-		Timeout:   90 * time.Second,
+		Timeout:   60 * time.Second,
 	}
 }
+
+// sharedHTTPClient is used when no proxy is configured.
+var sharedHTTPClient = &http.Client{Timeout: 60 * time.Second}
 
 // LoadNotifyConfig reads notification webhook and Jackett settings from config.toml.
 func (s *Server) LoadNotifyConfig() {
@@ -3589,8 +3598,9 @@ func (s *Server) searchNextPage(ctx searchContext) []indexer.SearchResult {
 	}
 	s.jackettActiveMu.Unlock()
 
-	// Jackett's Torznab API pages in fixed steps of 100 results.
-	const jackettPageSize = 100
+	// Jackett's Torznab API pages in fixed steps, which must match the limit
+	// jackett.Search requests.
+	const jackettPageSize = jackett.SearchLimit
 	offset := (ctx.NextPage - 1) * jackettPageSize
 
 	jr, err := jackett.Search(s.jackettConfig(), ctx.Query, nil, offset)

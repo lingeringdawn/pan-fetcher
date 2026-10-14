@@ -23,6 +23,15 @@ var (
 	cookieJar *cookiejar.Jar
 )
 
+// requestTimeout bounds a single Jackett API call. It matches the client
+// timeout so the context is never the tighter of the two.
+//
+// 20s was too tight for the first request against a cold Jackett: enumerating
+// hundreds of indexers took long enough to trip the deadline, which surfaced as
+// "connection failed: context deadline exceeded" even though the instance was
+// healthy and answering.
+const requestTimeout = 60 * time.Second
+
 func init() {
 	cookieJar, _ = cookiejar.New(nil)
 }
@@ -315,7 +324,7 @@ func fetchIndexers(cfg Config, configuredOnly bool) ([]IndexerInfo, error) {
 	}
 	u.RawQuery = q.Encode()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -378,6 +387,17 @@ func ListAllIndexers(cfg Config) ([]IndexerInfo, error) {
 
 // Search queries a Jackett/Prowlarr instance and returns parsed results.
 // offset is the starting offset for pagination (0 = first page).
+// SearchLimit is the number of results requested from Jackett per call.
+//
+// Without a limit Jackett queries every configured tracker in full and returns
+// everything it finds: a broad query such as "TARI TARI" came back with 1185
+// items after ~19.5s, which both sat right on the request deadline and buried
+// the few relevant results. Capping the page finishes in ~2.5s.
+//
+// It also has to stay in step with Jackett's fixed Torznab paging, which the
+// panel's "next page" control advances by this same amount.
+const SearchLimit = 100
+
 func Search(cfg Config, query string, categories []int, offset int) ([]Result, error) {
 	u, err := url.Parse(strings.TrimRight(cfg.URL, "/") + "/api/v2.0/indexers/all/results/torznab/api")
 	if err != nil {
@@ -387,6 +407,7 @@ func Search(cfg Config, query string, categories []int, offset int) ([]Result, e
 	q.Set("apikey", cfg.APIKey)
 	q.Set("t", "search")
 	q.Set("q", query)
+	q.Set("limit", strconv.Itoa(SearchLimit))
 	if offset > 0 {
 		q.Set("offset", strconv.Itoa(offset))
 	}
@@ -399,7 +420,10 @@ func Search(cfg Config, query string, categories []int, offset int) ([]Result, e
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest("GET", u.String(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -497,7 +521,7 @@ func AddIndexer(cfg Config, id string) error {
 	}
 
 	baseURL := strings.TrimRight(cfg.URL, "/")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	// Step 1: GET default config
@@ -619,7 +643,7 @@ func DeleteIndexer(cfg Config, id string) error {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", delURL.String(), nil)
