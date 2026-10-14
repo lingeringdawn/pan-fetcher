@@ -16,8 +16,9 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata sqlite-libs curl
 
 ENV TZ=Asia/Shanghai
-# Alpine is musl-based, so the one-click Jackett install must fetch the musl
-# build; the default glibc binary will not run here.
+# Only relevant when Jackett is installed from the web UI rather than run as a
+# separate service: Alpine is musl-based, so the glibc build would not run here.
+# docker-compose.yml supplies Jackett as its own service, which makes this moot.
 ENV JACKETT_MUSL=1
 
 WORKDIR /app

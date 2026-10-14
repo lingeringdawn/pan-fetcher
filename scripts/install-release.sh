@@ -3,7 +3,8 @@
 set -Eeuo pipefail
 
 APP_NAME='pan-fetcher'
-REPO='mguyenanastacio-glitch/pan-fetcher'
+REPO='lingeringdawn/pan-fetcher'
+BRANCH='master'
 BIN_DIR='/opt/pan-fetcher/bin'
 BIN_PATH="${BIN_DIR}/pan-fetcher"
 DATA_DIR='/var/lib/pan-fetcher'
@@ -38,8 +39,8 @@ Commands:
   purge       Uninstall and remove config and data.
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install-release.sh | sudo bash
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install-release.sh | sudo bash -s -- uninstall
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts/install-release.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts/install-release.sh | sudo bash -s -- uninstall
 EOF
 }
 
@@ -119,22 +120,6 @@ EOF
     chmod 0600 "$DB_FILE"
     info "kept existing: ${DB_FILE}"
   fi
-}
-
-install_indexers() {
-  local indexers_dir="${DATA_DIR}/indexers"
-  if [ -d "$indexers_dir" ] && [ "$(ls -A "$indexers_dir" 2>/dev/null)" ]; then
-    info "kept existing: ${indexers_dir}"
-    return
-  fi
-  mkdir -p "$indexers_dir"
-  local base="https://raw.githubusercontent.com/${REPO}/master/indexers"
-  local files="mikan.yml nyaasi.yml dmhy.yml acgnx.yml acgrip.yml bangumi-moe.yml eztv.yml"
-  files="$files torrentz2.yml thepiratebay.yml demonoid.yml metaltracker.yml"
-  for f in $files; do
-    curl -fsSL "${base}/${f}" -o "${indexers_dir}/${f}" || true
-  done
-  info "installed: ${indexers_dir}"
 }
 
 download_binary() {
@@ -239,7 +224,6 @@ install_release() {
   download_binary "$version" "$arch" "$tmp_file"
   install_config_dir
   install_default_config
-  install_indexers
   install_binary "$tmp_file" "$tmp_dir"
   install_systemd_service
 
@@ -296,7 +280,7 @@ Kept config and data:
   ${DATA_DIR}
 
 Remove them too:
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install-release.sh | sudo bash -s -- purge
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts/install-release.sh | sudo bash -s -- purge
 EOF
 }
 

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # pan-fetcher Docker one-click setup
 
 APP_DIR="${HOME}/pan-fetcher"
-COMPOSE_URL="https://raw.githubusercontent.com/mguyenanastacio-glitch/pan-fetcher/master/docker-compose.yml"
+COMPOSE_URL="https://raw.githubusercontent.com/lingeringdawn/pan-fetcher/master/docker-compose.yml"
 
 echo "=== pan-fetcher Docker Setup ==="
 echo ""

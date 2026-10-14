@@ -1,7 +1,7 @@
 services:
   pan-fetcher:
-    image: mguyenanastacio/pan-fetcher:latest
-    # Alternative: ghcr.io/mguyenanastacio-glitch/pan-fetcher:latest
+    image: lingeringdawn/pan-fetcher:latest
+    # Alternative: ghcr.io/lingeringdawn/pan-fetcher:latest
     container_name: pan-fetcher
     restart: unless-stopped
     ports:
@@ -9,5 +9,33 @@ services:
     volumes:
       - ./data:/app/data
       - ./config.toml:/app/config.toml
+      # Jackett's config directory, read-only. pan-fetcher reads
+      # /config/Jackett/ServerConfig.json from here to adopt the API key
+      # automatically, so no manual entry is needed.
+      - ./data/jackett-config:/config:ro
     environment:
+      - TZ=Asia/Shanghai
+      # Jackett is reachable by service name inside the compose network, so the
+      # URL cannot be auto-detected (that would yield 127.0.0.1, which is
+      # pan-fetcher's own container). Supply it explicitly; the API key still
+      # comes from the shared config file above.
+      - JACKETT_URL=http://jackett:9117
+    depends_on:
+      - jackett
+
+  # pan-fetcher delegates all searching to Jackett, so this service is required.
+  jackett:
+    image: linuxserver/jackett:latest
+    container_name: jackett
+    restart: unless-stopped
+    ports:
+      - "9117:9117"
+    volumes:
+      # Shared with pan-fetcher above. The image sets XDG_CONFIG_HOME=/config,
+      # so Jackett keeps its configuration at /config/Jackett/ServerConfig.json.
+      - ./data/jackett-config:/config
+      - ./data/jackett-downloads:/downloads
+    environment:
+      - PUID=1000
+      - PGID=1000
       - TZ=Asia/Shanghai

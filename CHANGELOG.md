@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.1
+
+### 修复
+- **Linux 一键安装脚本指向旧仓库**：`scripts/install-release.sh` 的 `REPO` 仍是重命名前的 `mguyenanastacio-glitch/pan-fetcher`，导致 release 查询与二进制下载依赖 GitHub 的重定向才不失败；文档示例中的分支也写成不存在的 `main`（仓库默认分支为 `master`），照抄会 404。现改为正确的仓库名并抽出 `BRANCH` 变量。
+- **安装脚本尝试下载已删除的索引器目录**：`install_indexers()` 会从仓库拉取 `indexers/*.yml`，而该目录已在 v2.0.0 随内置引擎一并移除，请求全部 404。该函数及调用已删除。
+- **Docker 镜像名指向不存在的仓库**：`docker-compose.yml` 使用 `mguyenanastacio/pan-fetcher:latest`（Docker Hub 上不存在，拉取返回 401）。现改为实际存在的 `lingeringdawn/pan-fetcher`；`scripts/docker-setup.sh` 下载 compose 文件的地址同样由旧组织名更正。
+
+### 变更
+- **Docker 部署内置 Jackett 服务**：`docker-compose.yml` 新增 `jackett` 服务（`linuxserver/jackett`）。v2.0.0 起搜索完全依赖 Jackett，仅启动 pan-fetcher 会让搜索不可用。两个容器共享配置目录，pan-fetcher 借此读取 `ServerConfig.json` 自动获得 API Key，无需手工填写；`JACKETT_URL` 显式指向服务名（容器内无法通过端口探测发现它）。
+
 ## v2.0.0
 
 ### 破坏性变更
