@@ -56,7 +56,7 @@ type savedSearch struct {
 }
 
 func (s *Server) loadSavedSearches() []savedSearch {
-	data, err := os.ReadFile("saved-searches.json")
+	data, err := os.ReadFile(s.dataFile("saved-searches.json"))
 	if err != nil {
 		return nil
 	}
@@ -67,7 +67,7 @@ func (s *Server) loadSavedSearches() []savedSearch {
 
 func (s *Server) saveSearches(searches []savedSearch) {
 	data, _ := json.MarshalIndent(searches, "", "  ")
-	os.WriteFile("saved-searches.json", data, 0644)
+	os.WriteFile(s.dataFile("saved-searches.json"), data, 0644)
 }
 
 func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {

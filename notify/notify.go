@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -31,6 +32,21 @@ type RecentItem struct {
 	Name string `json:"name"`
 	Time string `json:"time"`
 	Sub  string `json:"sub"`
+}
+
+// SetDataDir points the recent-items file at the application data directory.
+//
+// The file used to be a bare relative name, which resolved against the process
+// working directory. Self-update restarts the server with its working directory
+// set to the binary's folder, so the list silently moved. Call this during
+// startup, before LoadRecentItems.
+func SetDataDir(dir string) {
+	if dir == "" {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	recentFile = filepath.Join(dir, "recent-items.json")
 }
 
 // RecordItems adds items to the recent list for dashboard display.

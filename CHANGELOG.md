@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.0.2
+
+### 修复
+- **自更新后 Jackett 连接丢失**：所有运行时文件（`web-settings.json`、`jackett-enabled.json`、`rss.json`、`dedup-cache.json`、`search-cache.json`、`recent-items.json`、`saved-searches.json`）此前都是裸相对路径，依赖进程工作目录。自更新的重启逻辑会把工作目录设为二进制所在目录，于是这些文件改从那里解析：`web-settings.json` 读不到，Jackett 的地址与 API Key 变成空值，表现为"更新后连接异常"。现统一锚定到数据库所在目录，重启后配置保持。
+- **`compareVersion` 误判预发布版本**：解析用 `strconv.Atoi` 且忽略错误，`"1-rc1"` 变成 0，导致 `v2.0.1-rc1` 与 `v2.0.0` 比较相等，更新提示被隐藏。现理解 `-rc`/`-beta` 等后缀，正式版高于其自身预发布版；无法解析的输入不再伪装成合法版本。
+
+### 变更
+- **「自动检查更新」开关不再形同虚设**：此前该选项只被存取与显示，全项目无任何代码消费它。现勾选后启动后台检查协程，按订阅间隔轮询，发现新版本时记录日志并推送通知。仍**不会自动安装**——应用更新会重启服务并中断 RSS 轮询与在途下载，因此保留为设置页的手动操作。文案同步改为「自动检查更新并通知」。
+- 权限不足时的错误提示改为可操作：此前直接透出 `write: open ...: permission denied`，现指出具体目录并说明解决办法（以管理员身份执行，或调整目录权限）。非权限类错误仍保留原始错误信息。
+
+### 清理
+- 移除 `copyFile()`：零调用，原为 Windows 自替换方案准备。
+- 移除前端 `j.action==='sudo'` 分支与 `update_need_sudo` 文案：后端从不返回 `action` 字段，该分支永不触发，配套文案因此成了孤儿。
+
+### 测试
+- 新增 `server/update_test.go`：`compareVersion` 全序（含预发布、空版本、垃圾输入）、权限与非权限错误提示、`resolveDataFile` 不受工作目录影响（自更新配置丢失的回归测试）、绝对路径保持原样、`notify.SetDataDir` 生效。
+
 ## v2.0.1
 
 ### 修复

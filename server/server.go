@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -86,6 +88,11 @@ type Server struct {
 	taskCountCacheAt  time.Time
 	entryCache        map[string]p115pkg.DirEntry
 	entryCacheMu      sync.Mutex
+
+	// updateNotice holds the newest version found by the background poll, so
+	// the settings page can report it without issuing its own GitHub request.
+	updateNotice   string
+	updateNoticeMu sync.Mutex
 }
 
 type fsCacheEntry struct {
@@ -216,7 +223,9 @@ var (
 	filterKeyword   string // the keyword currently applied to searchCache
 )
 
-const searchCacheFile = "search-cache.json"
+// searchCacheFile is resolved against dataDir at startup so that the cache
+// survives a self-update restart (see resolveDataFile).
+var searchCacheFile = "search-cache.json"
 
 type persistedSearch struct {
 	Query     string                 `json:"query"`
@@ -278,6 +287,11 @@ type searchContext struct {
 	PageSize  int      // items per display page
 	Exhausted bool
 }
+// dataDir anchors every runtime file. SetDataDir must be called during startup
+// (it is derived from the database path); the default keeps relative behaviour
+// for tests and for a bare `pan-fetcher server` run in the data directory.
+var dataDir = "."
+
 var dedupCachePath = "dedup-cache.json"
 
 // ---------- dedup + torrent URL cache (unified) ----------
@@ -670,7 +684,7 @@ type webSettings struct {
 }
 
 func (s *Server) loadWebSettings() webSettings {
-	data, err := os.ReadFile("web-settings.json")
+	data, err := os.ReadFile(s.dataFile("web-settings.json"))
 	if err != nil {
 		return webSettings{Lang: "zh", SubsInterval: 60, PageSize: 50}
 	}
@@ -687,7 +701,7 @@ func (s *Server) loadWebSettings() webSettings {
 
 func (s *Server) saveWebSettings(ws webSettings) {
 	data, _ := json.MarshalIndent(ws, "", "  ")
-	os.WriteFile("web-settings.json", data, 0644)
+	os.WriteFile(s.dataFile("web-settings.json"), data, 0644)
 }
 
 func (s *Server) loadJackettEnabled() {
@@ -695,7 +709,7 @@ func (s *Server) loadJackettEnabled() {
 		return // already loaded
 	}
 	s.jackettActive = make(map[string]bool)
-	data, err := os.ReadFile("jackett-enabled.json")
+	data, err := os.ReadFile(s.dataFile("jackett-enabled.json"))
 	if err != nil {
 		return
 	}
@@ -713,7 +727,7 @@ func (s *Server) saveJackettEnabled() {
 		ids = append(ids, id)
 	}
 	data, _ := json.Marshal(ids)
-	os.WriteFile("jackett-enabled.json", data, 0644)
+	os.WriteFile(s.dataFile("jackett-enabled.json"), data, 0644)
 }
 
 // jackettConfig returns a jackett.Config populated from server settings.
@@ -949,7 +963,7 @@ func LoadPersistedPassword() {
 	if webPassword != "" {
 		return // CLI flag takes precedence
 	}
-	data, err := os.ReadFile("web-settings.json")
+	data, err := os.ReadFile(resolveDataFile("web-settings.json"))
 	if err != nil {
 		return
 	}
@@ -1010,6 +1024,13 @@ func New(agent *p115pkg.Agent, port int) *Server {
 		agent.Dedup = globalDedup
 		s.Agent = agent
 	}
+	// Anchor all runtime files to the data directory before anything reads them.
+	// Without this the sidecar files resolve against the process working
+	// directory, which self-update changes on restart.
+	dataDir = s.dataDir()
+	dedupCachePath = resolveDataFile("dedup-cache.json")
+	rssJsonPath = resolveDataFile("rss.json")
+	searchCacheFile = resolveDataFile("search-cache.json")
 	// Pre-load Jackett settings from web-settings.json
 	ws := s.loadWebSettings()
 	s.JackettURL = ws.JackettURL
@@ -1130,6 +1151,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Load caches
 	globalDedup.Load()
 	rsssite.SetTorrentHashCache(globalDedup)
+	notify.SetDataDir(dataDir)
 	notify.LoadRecentItems()
 
 	// Populate task count cache asynchronously (don't block startup)
@@ -1144,6 +1166,13 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start subscription auto-runner
 	go s.autoRunSubscriptions()
 
+	// Periodically check for updates when the user opted in. This only detects
+	// and reports: applying an update restarts the server, so it stays a
+	// deliberate action taken from the settings page.
+	if s.loadWebSettings().AutoUpdate {
+		go s.autoCheckUpdates()
+	}
+
 	useTLS := s.CertFile != "" && s.KeyFile != ""
 	scheme := "http"
 	if useTLS {
@@ -1154,6 +1183,71 @@ func (s *Server) Start(ctx context.Context) error {
 		return srv.ListenAndServeTLS(s.CertFile, s.KeyFile)
 	}
 	return srv.ListenAndServe()
+}
+
+// autoCheckUpdates polls for a newer release on a fixed cadence when the user
+// has opted in.
+//
+// It deliberately does not install: applying an update restarts the server and
+// would interrupt RSS polling and in-flight downloads, so the release page
+// stays the place where the user commits to it. A discovered version is stored
+// so the settings page can report it without waiting for its own request, and a
+// notification is sent once per newly seen version.
+func (s *Server) autoCheckUpdates() {
+	// Give the server a moment to settle before the first poll.
+	time.Sleep(1 * time.Minute)
+
+	var lastSeen string
+	for {
+		ws := s.loadWebSettings()
+		if !ws.AutoUpdate {
+			return // switched off in the settings page
+		}
+
+		interval := ws.SubsInterval
+		if interval <= 0 {
+			interval = 60
+		}
+		// Checking far more often than the RSS cycle is pointless: GitHub
+		// rate-limits unauthenticated API calls.
+		if interval < 30 {
+			interval = 30
+		}
+
+		if latest := s.latestReleaseTag(); latest != "" && latest != lastSeen {
+			lastSeen = latest
+			if compareVersion(latest, Version) > 0 {
+				s.updateNoticeMu.Lock()
+				s.updateNotice = latest
+				s.updateNoticeMu.Unlock()
+				log.Printf("[update] 发现新版本 %s（当前 %s），请前往设置页手动更新", latest, Version)
+				notify.Send("pan-fetcher 发现新版本 "+latest+"（当前 "+Version+"），请前往设置页手动更新", true)
+			}
+		}
+
+		time.Sleep(time.Duration(interval) * time.Minute)
+	}
+}
+
+// latestReleaseTag returns the tag name of the newest GitHub release, or "" if
+// it cannot be determined. Errors are swallowed: a background poll must not
+// spam the log when the machine is offline.
+func (s *Server) latestReleaseTag() string {
+	resp, err := s.httpClient().Get("https://api.github.com/repos/lingeringdawn/pan-fetcher/releases/latest")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return ""
+	}
+	return release.TagName
 }
 
 // autoRunSubscriptions loops through enabled RSS subscriptions.
@@ -2835,7 +2929,25 @@ func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 		HasUpdate bool   `json:"has_update"`
 		URL       string `json:"url,omitempty"`
 	}
+	w.Header().Set("Content-Type", "application/json")
+
 	info := updateInfo{Current: Version}
+
+	// Prefer what the background poll already knows, so the page answers without
+	// a GitHub round trip. Fall back to querying directly if it has not run yet.
+	s.updateNoticeMu.Lock()
+	cached := s.updateNotice
+	s.updateNoticeMu.Unlock()
+
+	if cached != "" {
+		info.Latest = cached
+		info.HasUpdate = compareVersion(cached, Version) > 0
+		if info.HasUpdate {
+			info.URL = "https://github.com/lingeringdawn/pan-fetcher/releases/tag/" + cached
+		}
+		json.NewEncoder(w).Encode(info)
+		return
+	}
 
 	resp, err := s.httpClient().Get("https://api.github.com/repos/lingeringdawn/pan-fetcher/releases/latest")
 	if err != nil {
@@ -2862,7 +2974,6 @@ func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	info.HasUpdate = compareVersion(release.TagName, Version) > 0
 	info.URL = release.HTMLURL
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
 }
 
@@ -2943,7 +3054,7 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	// Write new binary next to the executable (same filesystem = atomic rename works)
 	tmpPath := exe + ".new"
 	if err := os.WriteFile(tmpPath, binaryData, 0755); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "write: " + err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": updateWriteError(lang, tmpPath, err)})
 		return
 	}
 
@@ -2951,7 +3062,7 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	// over, so this succeeds in place and we then restart ourselves.
 	if err := os.Rename(tmpPath, exe); err != nil {
 		os.Remove(tmpPath)
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": tr(lang, "update_install_failed") + ": " + err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": updateWriteError(lang, exe, err)})
 		return
 	}
 
@@ -2959,27 +3070,16 @@ func (s *Server) handleDoUpdate(w http.ResponseWriter, r *http.Request) {
 	go func() { time.Sleep(500 * time.Millisecond); doRestart() }()
 }
 
-// copyFile copies a file from src to dst, preserving permissions.
-func copyFile(src, dst string) error {
-	s, err := os.Open(src)
-	if err != nil {
-		return err
+// updateWriteError turns a failed binary replacement into an actionable message.
+//
+// A bare os error ("open /opt/.../pan-fetcher.new: permission denied") gives the
+// user no idea what to do. The usual cause is an install directory owned by
+// root while the service runs unprivileged, so name the directory and the fix.
+func updateWriteError(lang, path string, err error) string {
+	if errors.Is(err, fs.ErrPermission) {
+		return trf(lang, "update_need_sudo_fmt", filepath.Dir(path))
 	}
-	defer s.Close()
-
-	info, err := s.Stat()
-	if err != nil {
-		return err
-	}
-
-	d, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-
-	_, err = io.Copy(d, s)
-	return err
+	return tr(lang, "update_install_failed") + ": " + err.Error()
 }
 
 // extractFromTarGz extracts a named file from a .tar.gz stream.
@@ -3005,25 +3105,62 @@ func extractFromTarGz(r io.Reader, name string) ([]byte, error) {
 	return nil, fmt.Errorf("binary %q not found in archive", name)
 }
 
-// compareVersion compares two semver strings (e.g. "v0.4.0" vs "v0.3.3").
+// compareVersion compares two semver strings (e.g. "v2.0.1" vs "v2.0.0").
 // Returns positive if a > b, zero if equal, negative if a < b.
+//
+// Pre-release suffixes are understood: a version carrying one (-rc1, -beta2)
+// sorts below the same version without it, so "v2.0.1-rc1" < "v2.0.1" but
+// "v2.0.1-rc1" > "v2.0.0". Parsing previously ignored the suffix entirely,
+// which made "v2.0.1-rc1" compare equal to "v2.0.0" and hid the update.
 func compareVersion(a, b string) int {
-	parse := func(s string) []int {
-		s = strings.TrimPrefix(s, "v")
-		parts := strings.Split(s, ".")
-		nums := make([]int, len(parts))
-		for i, p := range parts {
-			nums[i], _ = strconv.Atoi(p)
-		}
-		return nums
-	}
-	va, vb := parse(a), parse(b)
+	va, pa := parseVersion(a)
+	vb, pb := parseVersion(b)
+
 	for i := 0; i < len(va) && i < len(vb); i++ {
 		if va[i] != vb[i] {
 			return va[i] - vb[i]
 		}
 	}
-	return len(va) - len(vb)
+	if d := len(va) - len(vb); d != 0 {
+		return d
+	}
+	// Numeric parts equal: a release outranks its own pre-release.
+	switch {
+	case pa == "" && pb != "":
+		return 1
+	case pa != "" && pb == "":
+		return -1
+	case pa == pb:
+		return 0
+	case pa < pb:
+		return -1
+	default:
+		return 1
+	}
+}
+
+// parseVersion splits "v1.2.3-rc1" into its numeric parts and pre-release tag.
+// Non-numeric segments are skipped rather than silently becoming zero, so a
+// malformed version cannot masquerade as a valid one.
+func parseVersion(s string) ([]int, string) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
+
+	prerelease := ""
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		prerelease = s[i+1:]
+		s = s[:i]
+	}
+
+	parts := strings.Split(s, ".")
+	nums := make([]int, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil {
+			continue // drop unparsable segments instead of counting them as 0
+		}
+		nums = append(nums, n)
+	}
+	return nums, prerelease
 }
 
 // doRestart spawns a new process and exits.
@@ -3903,10 +4040,37 @@ func (s *Server) databasePathAbs() string {
 	return abs
 }
 
+// dataDir is the directory holding all runtime state: the database and the
+// sidecar files (web-settings.json, rss.json, dedup-cache.json, ...).
+//
+// Every runtime file is resolved through here rather than by bare relative
+// name. The process working directory is not a stable anchor: self-update
+// restarts the server with its working directory set to the binary's folder,
+// so relative names silently resolved to a different directory afterwards and
+// the settings (including the Jackett connection) appeared to be lost.
+func (s *Server) dataDir() string {
+	return filepath.Dir(s.databasePathAbs())
+}
+
+// dataFile resolves a runtime file name against dataDir.
+func (s *Server) dataFile(name string) string {
+	return resolveDataFile(name)
+}
+
+// resolveDataFile resolves a runtime file name against the data directory
+// derived from the configured database path. It exists for the package-level
+// helpers (dedup cache, search cache) that have no Server receiver.
+func resolveDataFile(name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(dataDir, name)
+}
+
 // jackettInstallDir is where a Jackett instance installed by pan-fetcher lives:
 // a "jackett" folder beside the database, so a single data volume carries both.
 func (s *Server) jackettInstallDir() string {
-	return jackett.InstallDir(filepath.Dir(s.databasePathAbs()))
+	return jackett.InstallDir(s.dataDir())
 }
 
 // applyJackettSettings stores Jackett connection details in memory and persists
