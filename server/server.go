@@ -3194,22 +3194,54 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已更新", "webhooks": hooks})
 
 	case "test":
-		// A saved channel is tested as configured; an unsaved one is tested from
-		// the form values, so the URL can be verified before committing it.
+		// A saved channel is tested exactly as stored — including its kind, which
+		// decides the payload format. Testing from the form alone used to lose
+		// the kind (the test request carries only an id), so a WeChat Work entry
+		// was tested as a generic JSON webhook, which that endpoint rejects:
+		// subscribing worked while the test button always failed.
+		//
+		// An unsaved entry is tested from the form values, so a URL can be
+		// verified before committing it.
 		cfg, err := webhookConfigFromForm(r)
 		if err != nil {
 			writeJSON(w, false, err.Error())
 			return
 		}
-		if cfg.ID != "" && cfg.URL == "" {
+		if id := cfg.ID; id != "" {
+			found := false
 			for _, h := range hooks {
-				if h.ID == cfg.ID {
-					cfg.URL = h.URL
-					if cfg.Secret == "" {
-						cfg.Secret = h.Secret
-					}
-					break
+				if h.ID != id {
+					continue
 				}
+				found = true
+				// Take the stored entry wholesale, then let the form override the
+				// fields it actually submitted. This keeps the kind, and it also
+				// means a test uses the saved URL rather than depending on the
+				// page having sent it.
+				merged := h
+				if cfg.Name != "" {
+					merged.Name = cfg.Name
+				}
+				if cfg.URL != "" {
+					merged.URL = cfg.URL
+				}
+				if cfg.Secret != "" {
+					merged.Secret = cfg.Secret
+				}
+				if len(cfg.Events) > 0 {
+					merged.Events = cfg.Events
+				}
+				// Kind comes from the form only when it was actually submitted;
+				// otherwise the stored one wins.
+				if k := strings.TrimSpace(r.FormValue("kind")); k != "" {
+					merged.Kind = notify.NormalizeKind(k)
+				}
+				cfg = merged
+				break
+			}
+			if !found {
+				writeJSON(w, false, "未找到该 Webhook")
+				return
 			}
 		}
 		if err := notify.TestWebhookChannel(cfg); err != nil {

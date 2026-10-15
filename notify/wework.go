@@ -19,6 +19,17 @@ type weworkMD struct {
 	Content string `json:"content"`
 }
 
+// weworkResp is WeChat Work's reply.
+//
+// The endpoint answers HTTP 200 even when it rejects the message, putting the
+// outcome in errcode. Treating the status code alone as success made a rejected
+// send look like a delivered notification — which is exactly what the settings
+// page test button reports, so the button said "sent" while nothing arrived.
+type weworkResp struct {
+	ErrCode int    `json:"errcode"`
+	ErrMsg  string `json:"errmsg"`
+}
+
 // sendWework posts markdown content to a WeChat Work webhook.
 //
 // WeChat Work is not a generic webhook: it expects this fixed envelope and
@@ -38,11 +49,34 @@ func sendWework(url string, client *http.Client, content string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 400 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	// A 200 with a non-zero errcode is still a failure.
+	var r weworkResp
+	if err := json.Unmarshal(raw, &r); err == nil && r.ErrCode != 0 {
+		return fmt.Errorf("企业微信返回错误 %d: %s%s", r.ErrCode, r.ErrMsg, weworkErrHint(r.ErrCode))
 	}
 	return nil
+}
+
+// weworkErrHint explains the codes users actually hit, so the panel reports
+// something actionable instead of a bare number.
+func weworkErrHint(code int) string {
+	switch code {
+	case 93000:
+		return "（Webhook 地址无效或已失效，请在群机器人设置中重新获取）"
+	case 45009:
+		return "（触发频率限制，请稍后重试）"
+	case 40001:
+		return "（令牌无效，请检查地址中的 key）"
+	case 40058:
+		return "（请求参数错误）"
+	}
+	return ""
 }
 
 // isWeworkURL reports whether a URL looks like a WeChat Work group-bot webhook.

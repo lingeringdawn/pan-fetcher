@@ -377,6 +377,93 @@ func TestTestWebhookChannelSucceeds(t *testing.T) {
 	}
 }
 
+// TestTestWebhookChannelKeepsKind is the regression test for the WeChat Work
+// test button failing while real notifications worked.
+//
+// TestWebhookChannel builds the channel from the given config, so the kind has
+// to be carried through. When the caller dropped it, a WeChat Work entry was
+// tested as a generic JSON webhook — and that endpoint rejects anything that is
+// not its own markdown envelope, so the test always failed while subscribed
+// notifications (which did carry the kind) succeeded.
+func TestTestWebhookChannelKeepsKind(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer srv.Close()
+
+	cfg := WebhookConfig{ID: "w", Kind: KindWework, URL: srv.URL, Enabled: true}
+	if err := TestWebhookChannel(cfg); err != nil {
+		t.Fatalf("TestWebhookChannel: %v", err)
+	}
+	// The payload must be the markdown envelope, not the event JSON.
+	var payload struct {
+		MsgType string `json:"msgtype"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("payload is not the wework envelope: %v (%s)", err, body)
+	}
+	if payload.MsgType != "markdown" {
+		t.Errorf("msgtype = %q; the kind was lost and JSON was sent instead", payload.MsgType)
+	}
+}
+
+// TestSendWeworkReportsBusinessError covers the second half of the same bug.
+//
+// WeChat Work answers HTTP 200 even when it rejects the message, reporting the
+// outcome in errcode. Reading only the status code made a rejected send look
+// delivered, so the test button claimed success while nothing arrived.
+func TestSendWeworkReportsBusinessError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errcode":93000,"errmsg":"invalid webhook url"}`))
+	}))
+	defer srv.Close()
+
+	err := sendWework(srv.URL, srv.Client(), "## hi")
+	if err == nil {
+		t.Fatal("a non-zero errcode must be reported as a failure")
+	}
+	if !strings.Contains(err.Error(), "93000") {
+		t.Errorf("error should carry the code, got %q", err)
+	}
+	// The hint makes the message actionable in the panel.
+	if !strings.Contains(err.Error(), "Webhook 地址无效") {
+		t.Errorf("error should explain code 93000, got %q", err)
+	}
+}
+
+// TestSendWeworkSucceedsOnZeroErrcode verifies a normal reply is not reported
+// as an error.
+func TestSendWeworkSucceedsOnZeroErrcode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer srv.Close()
+
+	if err := sendWework(srv.URL, srv.Client(), "## hi"); err != nil {
+		t.Errorf("errcode 0 should succeed, got %v", err)
+	}
+}
+
+// TestSendWeworkNonJSONBodyIsNotAnError verifies a 200 body that is not the
+// expected JSON is treated as success rather than parsed into a phantom error.
+//
+// A reverse proxy in front of the webhook can return its own 200 page; failing
+// on that would report a working setup as broken.
+func TestSendWeworkNonJSONBodyIsNotAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer srv.Close()
+
+	if err := sendWework(srv.URL, srv.Client(), "## hi"); err != nil {
+		t.Errorf("a non-JSON 200 body should not be an error, got %v", err)
+	}
+}
+
 // TestBuildChannels verifies every stored entry becomes a channel, in order.
 func TestBuildChannels(t *testing.T) {
 	if got := BuildChannels(nil); len(got) != 0 {

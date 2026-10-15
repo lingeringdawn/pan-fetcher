@@ -2208,6 +2208,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           var fd=new URLSearchParams();
           fd.set('webhook_action','test');
           fd.set('id',id);
+          // Send the stored kind so the server can test with the right payload
+          // format even if it cannot look the entry up.
+          var w=(window.__webhooks||[]).filter(function(x){return x.id===id;})[0];
+          if(w&&w.kind) fd.set('kind',w.kind);
+          if(w&&w.url) fd.set('url',w.url);
           try{
             var r=await fetch('/api/webhooks',{method:'POST',body:fd});
             var j=await r.json();
