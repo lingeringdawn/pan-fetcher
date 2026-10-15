@@ -107,6 +107,49 @@ func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/subs?subscribed=1", http.StatusSeeOther)
 }
 
+// effectiveFilter returns the filter that will actually be applied to a
+// subscription.
+//
+// The keyword lives in the URL's keyword parameter, because that is where
+// ProcessRSSFeed reads it from; the separate filter field only exists for
+// subscriptions created before that was the case. Reading only the field left
+// the edit form blank for every subscription whose filter had been written into
+// the URL — which is all of them once the subscription has been run or edited
+// at least once.
+//
+// The URL wins when it carries a keyword, matching ensureKeywordParam and the
+// auto-run behaviour.
+func effectiveFilter(rawURL, filter string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		if k := strings.TrimSpace(u.Query().Get("keyword")); k != "" {
+			return k
+		}
+	}
+	return strings.TrimSpace(filter)
+}
+
+// setURLKeyword returns rawURL with its keyword parameter set to keyword, or
+// with the parameter removed when keyword is blank.
+//
+// Unlike ensureKeywordParam this always overwrites: it is used when the user
+// explicitly edits the filter, where an existing value must be replaceable
+// (including being cleared).
+func setURLKeyword(rawURL, keyword string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		q.Del("keyword")
+	} else {
+		q.Set("keyword", keyword)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // ensureKeywordParam returns rawURL carrying the keyword query parameter.
 //
 // The keyword must live in the URL (not only in the filter field) because

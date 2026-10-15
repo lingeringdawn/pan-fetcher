@@ -444,3 +444,184 @@ func TestEditSubUnknownNameIsNoop(t *testing.T) {
 	}
 }
 
+// TestEffectiveFilterPrefersURLKeyword is the regression test for the edit form
+// showing an empty filter.
+//
+// The filter is stored in the URL's keyword parameter because that is where
+// ProcessRSSFeed reads it. The form read only the legacy Filter field, which is
+// empty for any subscription whose filter has been written into the URL — so the
+// box always came up blank and saving it would have wiped the real filter.
+func TestEffectiveFilterPrefersURLKeyword(t *testing.T) {
+	cases := []struct {
+		name   string
+		url    string
+		filter string
+		want   string
+	}{
+		{
+			name:   "keyword in URL wins over an empty field",
+			url:    "/rss/search?q=x&keyword=group%3ANEST",
+			filter: "",
+			want:   "group:NEST",
+		},
+		{
+			name:   "keyword in URL wins over a stale field",
+			url:    "/rss/search?q=x&keyword=new",
+			filter: "old",
+			want:   "new",
+		},
+		{
+			name:   "legacy field used when the URL has no keyword",
+			url:    "/rss/search?q=x",
+			filter: "legacy",
+			want:   "legacy",
+		},
+		{
+			name:   "both empty",
+			url:    "/rss/search?q=x",
+			filter: "",
+			want:   "",
+		},
+		{
+			name:   "unparsable URL falls back to the field",
+			url:    "://bad",
+			filter: "fallback",
+			want:   "fallback",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := effectiveFilter(c.url, c.filter); got != c.want {
+				t.Errorf("effectiveFilter(%q, %q) = %q, want %q", c.url, c.filter, got, c.want)
+			}
+		})
+	}
+}
+
+// TestSubsPageShowsFilterFromURL is the end-to-end check: the rendered form must
+// carry the filter that lives in the URL.
+func TestSubsPageShowsFilterFromURL(t *testing.T) {
+	withTempRssJSON(t, rssFeedEntry{
+		Name: "侦探已死",
+		URL:  "/rss/search?q=x&keyword=group%3ANEST+language%3A%E7%AE%80%E6%97%A5%E5%86%85%E5%B0%81",
+		Cid:  "cid-1", Enabled: true,
+	})
+	s, mux := newRecordingServer(t)
+
+	req := httptest.NewRequest("GET", "/subs", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /subs = %d", rec.Code)
+	}
+
+	// The value is HTML-escaped in the attribute; look for the decoded form.
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="filter"`) {
+		t.Fatal("edit form has no filter input")
+	}
+	want := "group:NEST language:简日内封"
+	if !strings.Contains(body, want) {
+		t.Errorf("filter input does not carry %q", want)
+	}
+	_ = s
+}
+
+// TestEditSubWritesFilterIntoURL verifies that saving a filter also updates the
+// URL, which is what actually drives the feed. Writing only the legacy field
+// left the old keyword in the URL still winning, so the edit looked saved but
+// had no effect.
+func TestEditSubWritesFilterIntoURL(t *testing.T) {
+	withTempRssJSON(t, rssFeedEntry{
+		Name: "sub",
+		URL:  "/rss/search?q=x&keyword=old",
+		Cid:  "cid-1", Enabled: true,
+	})
+	_, mux := newRecordingServer(t)
+
+	form := url.Values{
+		"action": {"edit"},
+		"site":   {"site"},
+		"name":   {"sub"},
+		"cid":    {"cid-1"},
+		"filter": {"group:NEST"},
+	}
+	postForm(mux, "/subs", form, nil)
+
+	got := readSingleSub(t)
+	if got.Filter != "group:NEST" {
+		t.Errorf("filter field = %q, want group:NEST", got.Filter)
+	}
+	u, err := url.Parse(got.URL)
+	if err != nil {
+		t.Fatalf("stored URL unparsable: %v", err)
+	}
+	if k := u.Query().Get("keyword"); k != "group:NEST" {
+		t.Errorf("URL keyword = %q, want group:NEST (url=%s)", k, got.URL)
+	}
+	// The rest of the URL must survive the rewrite.
+	if q := u.Query().Get("q"); q != "x" {
+		t.Errorf("query parameter lost: url=%s", got.URL)
+	}
+}
+
+// TestEditSubClearingFilterRemovesURLKeyword covers the clear path: an emptied
+// filter must remove the keyword, not leave the old one in place.
+func TestEditSubClearingFilterRemovesURLKeyword(t *testing.T) {
+	withTempRssJSON(t, rssFeedEntry{
+		Name: "sub",
+		URL:  "/rss/search?q=x&keyword=group%3ANEST",
+		Cid:  "cid-1", Enabled: true,
+	})
+	_, mux := newRecordingServer(t)
+
+	form := url.Values{
+		"action": {"edit"},
+		"site":   {"site"},
+		"name":   {"sub"},
+		"cid":    {"cid-1"},
+		"filter": {""},
+	}
+	postForm(mux, "/subs", form, nil)
+
+	got := readSingleSub(t)
+	u, err := url.Parse(got.URL)
+	if err != nil {
+		t.Fatalf("stored URL unparsable: %v", err)
+	}
+	if k := u.Query().Get("keyword"); k != "" {
+		t.Errorf("keyword should be removed, got %q (url=%s)", k, got.URL)
+	}
+	if q := u.Query().Get("q"); q != "x" {
+		t.Errorf("query parameter lost: url=%s", got.URL)
+	}
+}
+
+// TestSetURLKeyword covers the rewrite helper directly, including the case where
+// the URL carries no query string at all.
+//
+// Expected values use url.Values ordering (alphabetical), which is what Encode
+// produces; the point of the test is which parameters survive, not their order.
+func TestSetURLKeyword(t *testing.T) {
+	cases := []struct {
+		name    string
+		url     string
+		keyword string
+		want    string
+	}{
+		{"sets when absent", "/rss/search?q=x", "k", "/rss/search?keyword=k&q=x"},
+		{"overwrites existing", "/rss/search?q=x&keyword=old", "new", "/rss/search?keyword=new&q=x"},
+		{"removes when blank", "/rss/search?q=x&keyword=old", "", "/rss/search?q=x"},
+		{"blank on URL without keyword", "/rss/search?q=x", "", "/rss/search?q=x"},
+		{"unparsable URL unchanged", "://bad", "k", "://bad"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := setURLKeyword(c.url, c.keyword)
+			if got != c.want {
+				t.Errorf("setURLKeyword(%q, %q) = %q, want %q", c.url, c.keyword, got, c.want)
+			}
+		})
+	}
+}
+

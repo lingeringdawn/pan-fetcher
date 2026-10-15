@@ -4627,8 +4627,11 @@ func (s *Server) loadRssSubs() []rssSubRow {
 		for _, e := range entries {
 			rows = append(rows, rssSubRow{
 				Site: site, Name: e.Name, URL: e.URL,
-				Filter: e.Filter, Cid: e.Cid, SavePath: e.SavePath,
-				Enabled: e.Enabled,
+				// The keyword lives in the URL; fall back to the legacy field.
+				Filter:   effectiveFilter(e.URL, e.Filter),
+				Cid:      e.Cid,
+				SavePath: e.SavePath,
+				Enabled:  e.Enabled,
 				CacheCount:     globalDedup.SubCount(e.Name),
 				IndexerDisplay: parseIndexerFromRSSURL(e.URL),
 			})
@@ -4706,6 +4709,11 @@ func (s *Server) deleteRssSub(site, name string) {
 // than "leave it unchanged". Assigning unconditionally is therefore required —
 // guarding each field with `!= ""` made filter (and savepath) impossible to
 // clear once set.
+//
+// The filter is written into the URL's keyword parameter as well as the field,
+// because that is where ProcessRSSFeed reads it from. Updating only the field
+// would leave the old keyword in the URL still winning, so the edit would
+// appear to save and then have no effect.
 func (s *Server) updateRssSub(site, name, cid, savepath, filter string) {
 	feeds := s.readRssFeeds()
 	entries := feeds[site]
@@ -4714,6 +4722,7 @@ func (s *Server) updateRssSub(site, name, cid, savepath, filter string) {
 			feeds[site][i].Cid = cid
 			feeds[site][i].SavePath = savepath
 			feeds[site][i].Filter = filter
+			feeds[site][i].URL = setURLKeyword(e.URL, filter)
 			break
 		}
 	}
