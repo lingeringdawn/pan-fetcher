@@ -175,6 +175,22 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 		}
 	}
 
+	// Check the host before downloading 50 MB that cannot run. The launcher
+	// needs ICU at startup, and a missing one is the single most common reason
+	// a fresh install appears to succeed and then dies immediately.
+	env := DetectEnv(dir)
+	if !env.Supported() {
+		for _, p := range env.Problems {
+			logStep("环境检查未通过: %s", p)
+		}
+		return res, fmt.Errorf("%s", strings.Join(env.Problems, "；"))
+	}
+	for _, w := range env.Warnings {
+		logStep("提示: %s", w)
+	}
+	logStep("环境检查通过（%s %s，%s，ICU 已就绪）",
+		env.DistroName, env.Arch, env.PackageManager)
+
 	client := &http.Client{Timeout: 0} // bounded by ctx
 	tag, url, err := fetchLatestRelease(ctx, client)
 	if err != nil {
@@ -243,8 +259,18 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 	res.Installed = true
 	res.Executable = exePath
 	res.Version = tag
+	// Record what was installed so CheckUpdate can compare later. Jackett has no
+	// --version flag, so this marker is the only reliable source.
+	if err := writeInstalledVersion(dir, tag); err != nil {
+		logStep("记录版本信息失败（不影响使用）: %v", err)
+	}
 	logStep("安装完成: %s", exePath)
 	return res, nil
+}
+
+// platformArch returns the architecture Jackett assets are selected for.
+func platformArch() string {
+	return runtime.GOARCH
 }
 
 // flattenSingleRoot moves the contents of a sole top-level subdirectory up into

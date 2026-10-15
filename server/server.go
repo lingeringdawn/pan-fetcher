@@ -1399,6 +1399,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/indexers/jackett/discover", s.authCheck(s.handleJackettDiscover))
 	mux.HandleFunc("/indexers/jackett/install", s.authCheck(s.handleJackettInstall))
 	mux.HandleFunc("/indexers/jackett/start", s.authCheck(s.handleJackettStart))
+	mux.HandleFunc("/indexers/jackett/env", s.authCheck(s.handleJackettEnv))
+	mux.HandleFunc("/indexers/jackett/install-deps", s.authCheck(s.handleJackettInstallDeps))
+	mux.HandleFunc("/indexers/jackett/check-update", s.authCheck(s.handleJackettCheckUpdate))
+	mux.HandleFunc("/indexers/jackett/update", s.authCheck(s.handleJackettUpdate))
 	mux.HandleFunc("/search/subscribe", s.authCheck(s.handleSearchSubscribe))
 	mux.HandleFunc("/rss/search", s.handleRssSearch)
 	mux.HandleFunc("/subs/dirs", s.authCheck(s.handleSubsDirs))
@@ -3980,6 +3984,158 @@ func (s *Server) handleJackettInstall(w http.ResponseWriter, r *http.Request) {
 		"version":    res.Version,
 		"dir":        res.Dir,
 		"log":        res.Log,
+	})
+}
+
+// handleJackettEnv reports what the host provides for running Jackett.
+//
+// The panel calls this before offering an install so a missing dependency is
+// surfaced with the exact command that fixes it, rather than letting the user
+// download 50 MB that cannot start.
+func (s *Server) handleJackettEnv(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	rep := jackett.DetectEnv(s.jackettInstallDir())
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"env":    rep,
+		"usable": rep.Supported(),
+	})
+}
+
+// handleJackettInstallDeps installs the system packages Jackett needs.
+//
+// It only runs when the environment check says it can (root plus a known
+// package manager); otherwise the response explains what to run by hand.
+func (s *Server) handleJackettInstallDeps(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		writeJSON(w, false, "POST required")
+		return
+	}
+
+	rep := jackett.DetectEnv(s.jackettInstallDir())
+	// Only ICU is installable here. Other problems (an unwritable install
+	// directory, no disk space) would not be fixed by a package manager, so say
+	// so instead of running one for nothing.
+	if rep.HasICU {
+		writeJSON(w, true, "系统依赖已满足，无需安装")
+		return
+	}
+	if !rep.IsRoot || rep.PackageManager == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":   false,
+			"msg":  "无法自动安装：" + strings.Join(rep.Problems, "；"),
+			"log":  []string{},
+			"env":  rep,
+			"hint": jackett.InstallHint(rep),
+		})
+		return
+	}
+
+	log.Printf("[jackett] installing dependencies (distro=%s pm=%s root=%v)",
+		rep.Distro, rep.PackageManager, rep.IsRoot)
+
+	steps, err := jackett.InstallMissingDeps(rep)
+	if err != nil {
+		log.Printf("[jackett] dependency install failed: %v", err)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"msg":   err.Error(),
+			"log":   steps,
+			"env":   rep,
+			"hint":  jackett.InstallHint(rep),
+		})
+		return
+	}
+
+	// Re-check: the install may have succeeded without actually providing the
+	// library (a wrong package name, a stale index), and reporting success then
+	// would mislead the user.
+	after := jackett.DetectEnv(s.jackettInstallDir())
+	log.Printf("[jackett] dependencies installed: ICU=%v usable=%v", after.HasICU, after.Supported())
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      after.Supported(),
+		"msg":     dependencyResultMessage(after),
+		"log":     steps,
+		"env":     after,
+		"usable":  after.Supported(),
+	})
+}
+
+// dependencyResultMessage summarises the post-install state in one line.
+func dependencyResultMessage(after jackett.EnvReport) string {
+	if after.Supported() {
+		return "系统依赖安装完成"
+	}
+	if len(after.Problems) > 0 {
+		return "安装命令已执行，但环境仍不满足：" + after.Problems[0]
+	}
+	return "安装命令已执行，但环境仍不满足"
+}
+
+// handleJackettCheckUpdate compares the managed install against the latest
+// release.
+func (s *Server) handleJackettCheckUpdate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := s.jackettInstallDir()
+
+	st := jackett.CheckUpdate(r.Context(), dir)
+	log.Printf("[jackett] update check: installed=%q latest=%q hasUpdate=%v err=%q",
+		st.Installed, st.Latest, st.HasUpdate, st.Error)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":  true,
+		"st":  st,
+	})
+}
+
+// handleJackettUpdate replaces the managed install with the latest release.
+//
+// The running instance is stopped first: replacing files underneath a live
+// process leaves it serving from a half-swapped tree. It is not restarted
+// automatically so the caller can decide, but the response reports whether it
+// was running so the UI can offer to start it again.
+func (s *Server) handleJackettUpdate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		writeJSON(w, false, "POST required")
+		return
+	}
+	dir := s.jackettInstallDir()
+
+	if _, err := os.Stat(filepath.Join(dir, "jackett")); err != nil {
+		writeJSON(w, false, "尚未安装 Jackett，请先安装")
+		return
+	}
+
+	wasRunning := jackett.HealthCheck(s.JackettURL) == nil
+	if wasRunning {
+		log.Printf("[jackett] stopping before update")
+		if err := jackett.Stop(dir); err != nil {
+			log.Printf("[jackett] stop before update failed: %v", err)
+		}
+	}
+
+	res, err := jackett.Update(r.Context(), dir, log.Printf)
+	if err != nil {
+		log.Printf("[jackett] update failed: %v", err)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":          false,
+			"msg":         err.Error(),
+			"log":         res.Log,
+			"was_running": wasRunning,
+		})
+		return
+	}
+
+	log.Printf("[jackett] updated to %s in %s", res.Version, res.Dir)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":          true,
+		"msg":         "Jackett 已更新到 " + res.Version,
+		"version":     res.Version,
+		"log":         res.Log,
+		"was_running": wasRunning,
+		"dir":         res.Dir,
 	})
 }
 

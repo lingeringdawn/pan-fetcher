@@ -210,10 +210,3 @@ func writeJackettPort(t *testing.T, dir string, port int) {
 		t.Fatalf("write ServerConfig.json: %v", err)
 	}
 }
-
-func tailOf(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return "..." + s[len(s)-n:]
-}

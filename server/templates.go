@@ -1577,6 +1577,19 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div id="jk-setup-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
     </div>
 
+    <!-- host environment: what Jackett needs from this machine -->
+    <div class="card panel" id="jk-env-panel" style="margin-top:16px;">
+      <h2>{{index .T "jk_env_title"}}</h2>
+      <div class="hint" style="margin-bottom:8px;">{{index .T "jk_env_hint"}}</div>
+      <div id="jk-env-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+    </div>
+
+    <!-- installed version and update -->
+    <div class="card panel" id="jk-update-panel" style="margin-top:16px;">
+      <h2>{{index .T "jk_update_title"}}</h2>
+      <div id="jk-update-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+    </div>
+
     <!-- active indexers -->
     <div class="card panel" style="margin-top:16px;">
       <h2>{{index .T "indexer_list"}} ({{len .IndexerList}})</h2>
@@ -1651,6 +1664,150 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       function jkSetupMsg(text,isErr){
         var el=document.getElementById('jk-setup-result');
         if(el) el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+text+'</span>';
+      }
+
+      // ---- environment check -------------------------------------------------
+      // Rendered as a block of its own so a missing system dependency is
+      // visible before the user commits to a 50 MB download.
+
+      function jkEnvLine(label,value,ok){
+        var color = ok===undefined ? 'var(--muted)' : (ok?'var(--accent-2)':'var(--danger)');
+        return '<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;">'
+          + '<span style="color:var(--muted);min-width:96px;">'+label+'</span>'
+          + '<span style="color:'+color+';word-break:break-all;">'+value+'</span></div>';
+      }
+
+      function renderJKEnv(env,usable){
+        var el=document.getElementById('jk-env-body');
+        if(!el) return;
+        var h='';
+        h+=jkEnvLine('系统', (env.distro_name||env.os||'?')+' / '+env.arch);
+        h+=jkEnvLine('包管理器', env.package_manager||'未识别', !!env.package_manager);
+        h+=jkEnvLine('ICU 库', env.has_icu?'已安装':'缺失', env.has_icu);
+        if(env.glibc_version) h+=jkEnvLine('glibc', env.glibc_version);
+        if(env.musl) h+=jkEnvLine('libc', 'musl（将使用 musl 构建）');
+        if(env.install_dir){
+          h+=jkEnvLine('安装目录', env.install_dir+(env.install_dir_writable?'':'（不可写）'), env.install_dir_writable);
+        }
+        if(env.disk_free_bytes){
+          var freeMB=Math.round(env.disk_free_bytes/1048576);
+          var needMB=Math.round(env.disk_required_bytes/1048576);
+          h+=jkEnvLine('磁盘可用', freeMB+' MB / 需 '+needMB+' MB', env.disk_free_bytes>=env.disk_required_bytes);
+        }
+        h+=jkEnvLine('权限', env.is_root?'root':'非 root'+(env.can_install?'':'（无法自动装依赖）'), env.is_root);
+
+        if(env.problems&&env.problems.length){
+          h+='<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;font-size:12px;color:var(--danger);">';
+          env.problems.forEach(function(p){ h+='<div>✗ '+p+'</div>'; });
+          h+='</div>';
+        }
+        if(env.warnings&&env.warnings.length){
+          h+='<div style="margin-top:8px;font-size:12px;color:var(--warn);">';
+          env.warnings.forEach(function(w){ h+='<div>⚠ '+w+'</div>'; });
+          h+='</div>';
+        }
+
+        var btns='';
+        if(!usable){
+          if(env.can_install){
+            btns+='<button type="button" id="jk-deps-btn" onclick="jkInstallDeps()" style="margin:8px 0 0;padding:6px 14px;font-size:12px;background:var(--accent);">{{index .T "jk_env_install_deps"}}</button>';
+          }else{
+            btns+='<div class="hint" style="margin-top:8px;">{{index .T "jk_env_manual_hint"}}</div>';
+          }
+        }
+        h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'+btns+'</div>';
+        h+='<div id="jk-env-result" style="margin-top:8px;font-size:12px;"></div>';
+        el.innerHTML=h;
+      }
+
+      async function jkCheckEnv(){
+        var el=document.getElementById('jk-env-body');
+        if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+        try{
+          var r=await fetch('/indexers/jackett/env');
+          var j=await r.json();
+          if(!j.ok){ if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>'; return; }
+          renderJKEnv(j.env,j.usable);
+          // Block the install button when the host cannot run Jackett, so the
+          // download is not attempted at all.
+          var b=document.getElementById('jk-install-btn');
+          if(b){
+            b.disabled=!j.usable;
+            b.title=j.usable?'':'系统环境不满足，请先处理上面的问题';
+            b.style.opacity=j.usable?'1':'0.5';
+          }
+        }catch(e){
+          if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+        }
+      }
+
+      async function jkInstallDeps(){
+        var btn=document.getElementById('jk-deps-btn');
+        var out=document.getElementById('jk-env-result');
+        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_env_installing"}}';}
+        if(out) out.innerHTML='<span class="hint">{{index .T "jk_env_installing"}}</span>';
+        try{
+          var r=await fetch('/indexers/jackett/install-deps',{method:'POST'});
+          var j=await r.json();
+          if(out){
+            var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+            out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+          }
+          if(j.env) renderJKEnv(j.env,j.usable);
+        }catch(e){
+          if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+        }
+      }
+
+      // ---- version / update --------------------------------------------------
+
+      async function jkCheckUpdate(){
+        var el=document.getElementById('jk-update-body');
+        if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+        try{
+          var r=await fetch('/indexers/jackett/check-update');
+          var j=await r.json();
+          var st=j.st||{};
+          if(!el) return;
+          if(st.error){
+            el.innerHTML='<span class="hint" style="color:var(--warn);">⚠ '+(st.error)+'</span>';
+            return;
+          }
+          var h=jkEnvLine('已安装', st.installed||'未知', !!st.installed);
+          h+=jkEnvLine('最新版本', st.latest||'未知', true);
+          if(st.has_update){
+            h+='<div style="margin-top:8px;"><button type="button" id="jk-update-btn" onclick="jkDoUpdate()" style="margin:0;padding:6px 14px;font-size:12px;background:var(--accent);">{{index .T "jk_update_btn"}}</button></div>';
+          }else{
+            h+='<div class="hint" style="margin-top:6px;">{{index .T "jk_up_to_date"}}</div>';
+          }
+          h+='<div id="jk-update-result" style="margin-top:8px;font-size:12px;"></div>';
+          el.innerHTML=h;
+        }catch(e){
+          if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+        }
+      }
+
+      async function jkDoUpdate(){
+        if(!(await confirmAsync('{{index .T "jk_update_confirm"}}'))) return;
+        var btn=document.getElementById('jk-update-btn');
+        var out=document.getElementById('jk-update-result');
+        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_updating"}}';}
+        if(out) out.innerHTML='<span class="hint">{{index .T "jk_updating"}}</span>';
+        try{
+          var r=await fetch('/indexers/jackett/update',{method:'POST'});
+          var j=await r.json();
+          if(out){
+            var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+            out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+          }
+          // A stopped instance stays stopped: restarting is the user's call,
+          // because an update that swaps the tree may need a manual check first.
+          if(j.ok&&j.was_running&&out){
+            out.innerHTML+='<div style="margin-top:8px;"><button type="button" onclick="jkStart()" style="margin:0;padding:6px 14px;font-size:12px;background:var(--accent-2);">{{index .T "jk_start_btn"}}</button></div>';
+          }
+        }catch(e){
+          if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+        }
       }
 
       async function jkDiscover(){
@@ -1926,6 +2083,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }
       renderJKSetup(null);
       loadJackettLib();
+      // Environment first: it decides whether the install button is usable.
+      jkCheckEnv();
+      jkCheckUpdate();
     </script>
     {{end}}
 
