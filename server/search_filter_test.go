@@ -101,6 +101,81 @@ func TestApplyTitleFilterTermOrder(t *testing.T) {
 	}
 }
 
+// TestApplyTitleFilterWordBoundary is a regression test for a false positive
+// observed on live results.
+//
+// This Romanised Japanese title was kept for the query "TARI TARI" because
+// "tari" appears at the end of one word and again inside the next:
+// "...sare tari sarenakatta-ri-desuga...". Matching a term inside unrelated
+// words is what the word-boundary rule in indexAtWordStart prevents.
+func TestApplyTitleFilterWordBoundary(t *testing.T) {
+	bad := "婚約破棄されたりされなかったりですが、不幸令嬢になりました。 第01-02巻 " +
+		"[Konyaku Haki Sare Tari Sarenakattaridesuga Fuko Reijo Ni Narimashita vol 01-02]"
+
+	if got := applyTitleFilter(titles(bad), "TARI TARI"); len(got) != 0 {
+		t.Errorf("title matching only inside unrelated words was kept: %v", gotTitles(got))
+	}
+
+	// A term must still match at the very start of a title, and after a
+	// separator, since those are the boundaries releases actually use.
+	for _, ok := range []string{
+		"TARI TARI - 01",
+		"TARITARI - 05",
+		"[Group] TARI TARI - 02",
+		"TARI.TARI.2012",
+		"TARI_TARI_BD",
+	} {
+		if got := applyTitleFilter(titles(ok), "TARI TARI"); len(got) != 1 {
+			t.Errorf("legitimate title %q was dropped", ok)
+		}
+	}
+}
+
+// TestIndexAtWordStart pins the helper directly.
+func TestIndexAtWordStart(t *testing.T) {
+	cases := []struct {
+		s, term string
+		want    int
+	}{
+		{"tari tari", "tari", 0},
+		{"group tari tari", "tari", 6},
+		{"taritari", "tari", 0},
+		{"xxxtari", "tari", -1},
+		{"", "tari", -1},
+		{"no match here", "tari", -1},
+		// A term inside a longer word must not match, even when a space follows
+		// the prefix: this is the shape that produced the live false positive.
+		{"sarenakattari desuga", "tari", -1},
+		{"konyaku haki sare tari", "tari", 18},
+	}
+	for _, c := range cases {
+		if got := indexAtWordStart(c.s, c.term); got != c.want {
+			t.Errorf("indexAtWordStart(%q, %q) = %d, want %d", c.s, c.term, got, c.want)
+		}
+	}
+}
+
+// TestApplyTitleFilterSecondTermInsideWord covers the exact live failure: the
+// first "tari" is a real word, but the second occurrence is only found inside
+// the following word, so the title must still be rejected.
+func TestApplyTitleFilterSecondTermInsideWord(t *testing.T) {
+	title := "konyaku haki sare tari sarenakattaridesuga"
+	norm := normalizeForMatch(title)
+
+	// The first term is a genuine word.
+	if i := indexAtWordStart(norm, "tari"); i < 0 {
+		t.Fatalf("first term should match at a word start: %q", norm)
+	}
+	// The second must not be satisfied by the "tari" buried in "sarenakattari".
+	rest := norm[indexAtWordStart(norm, "tari")+len("tari"):]
+	if i := indexAtWordStart(rest, "tari"); i >= 0 {
+		t.Errorf("second term matched inside a word at %d in %q", i, rest)
+	}
+	if got := applyTitleFilter(titles(title), "TARI TARI"); len(got) != 0 {
+		t.Errorf("title was kept: %v", gotTitles(got))
+	}
+}
+
 // TestApplyTitleFilterNormalization covers the punctuation and spacing
 // differences between a query and how releases name the same thing.
 func TestApplyTitleFilterNormalization(t *testing.T) {

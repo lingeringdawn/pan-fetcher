@@ -2793,6 +2793,13 @@ func applyTitleFilter(results []indexer.SearchResult, query string) []indexer.Se
 // "tari tari" matches "tari tari 01" directly. Only when that fails do the terms
 // get matched individually, which covers a title that separates them with other
 // words ("tari the animation tari") while still requiring each occurrence.
+//
+// Individual terms must start at a word boundary. Without that constraint a
+// term is found inside unrelated words, and the Romanised Japanese title
+// "...sare tari sarenakattaridesuga..." matched "TARI TARI" because "tari"
+// appears at the end of "sarenakatta" followed by the "ri" of the next word.
+// Release names separate words with spaces, dots and brackets, all of which
+// normalisation turns into spaces, so the boundary is well defined.
 func matchQueryTerms(title, needle string, terms []string) bool {
 	if strings.Contains(title, needle) {
 		return true
@@ -2802,18 +2809,41 @@ func matchQueryTerms(title, needle string, terms []string) bool {
 	if len(terms) == 1 {
 		return false
 	}
-	// Walk the terms from the left, consuming the title as each is found. The
-	// position advances past every match, so a repeated term needs a second,
-	// later occurrence rather than reusing the first.
+	// Walk the terms from the left, consuming the title as each is found at a
+	// word boundary. The position advances past every match, so a repeated term
+	// needs a second, later occurrence rather than reusing the first.
 	rest := title
 	for _, t := range terms {
-		i := strings.Index(rest, t)
+		i := indexAtWordStart(rest, t)
 		if i < 0 {
 			return false
 		}
 		rest = rest[i+len(t):]
 	}
 	return true
+}
+
+// indexAtWordStart returns the index of the first occurrence of term in s that
+// begins at a word boundary, or -1.
+//
+// A boundary is the start of the string or a space. Concatenated forms such as
+// "taritari" still match their first term (the string starts with it), and the
+// second occurrence is then found in what remains.
+func indexAtWordStart(s, term string) int {
+	for off := 0; ; {
+		i := strings.Index(s[off:], term)
+		if i < 0 {
+			return -1
+		}
+		abs := off + i
+		if abs == 0 || s[abs-1] == ' ' {
+			return abs
+		}
+		off = abs + 1
+		if off >= len(s) {
+			return -1
+		}
+	}
 }
 
 // queryTerms splits a search query into lower-case terms worth matching on.

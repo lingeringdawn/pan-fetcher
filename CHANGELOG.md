@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.14
+
+### 修复
+- **聚合搜索过滤的词边界问题**：逐词匹配时未限制词首，导致搜索词在无关单词内部被找到。线上实测：罗马字日文标题 `...sare tari sarenakattaridesuga...` 被判定匹配 `TARI TARI`——第一个 `tari` 是独立词，第二个却落在 `sarenakatta` 末尾与后一个词的 `ri` 之间。现在匹配必须落在词首，`TARITARI`、`TARI.TARI`、`TARI[TARI]` 等连写或分隔形式仍正常命中。
+
 ## v2.0.13
 
 ### 修复
