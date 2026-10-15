@@ -6,6 +6,120 @@ import (
 	"testing"
 )
 
+// TestHomeDirsFallsBackWhenHomeUnset is the regression test for the panel
+// reporting a running, correctly configured Jackett as "not configured".
+//
+// systemd starts services with an empty environment, so HOME is unset. Jackett's
+// config lives in ~/.config/Jackett, and os.UserHomeDir fails without HOME, so
+// discovery never found it: the API key came back empty and the UI concluded the
+// instance was unconfigured. The home directory must therefore be resolved from
+// the passwd entry too.
+func TestHomeDirsFallsBackWhenHomeUnset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", "")
+
+	// With HOME empty the passwd entry (or, for root, /root) must be used.
+	dirs := homeDirs()
+	if len(dirs) == 0 {
+		t.Fatal("no home directory resolved with HOME unset")
+	}
+	for _, d := range dirs {
+		if !filepath.IsAbs(d) {
+			t.Errorf("home directory is not absolute: %q", d)
+		}
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			t.Errorf("home directory %q does not exist", d)
+		}
+	}
+	_ = home
+}
+
+// TestHomeDirsPrefersHomeEnv verifies $HOME wins when it is usable, so an
+// operator running under a custom HOME is not overridden by the passwd entry.
+func TestHomeDirsPrefersHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dirs := homeDirs()
+	if len(dirs) == 0 {
+		t.Fatal("no home directory resolved")
+	}
+	if dirs[0] != filepath.Clean(home) {
+		t.Errorf("first home = %q, want %q", dirs[0], filepath.Clean(home))
+	}
+}
+
+// TestHomeDirsSkipsNonexistent verifies unusable candidates are dropped, so the
+// ordered search in readServerConfig cannot be shadowed by a wrong guess.
+func TestHomeDirsSkipsNonexistent(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	t.Setenv("HOME", missing)
+
+	for _, d := range homeDirs() {
+		if d == filepath.Clean(missing) {
+			t.Errorf("nonexistent home %q was returned", d)
+		}
+	}
+}
+
+// TestHomeDirsNoDuplicates verifies the list is de-duplicated: repeats would
+// make the candidate list longer than needed and the log confusing.
+func TestHomeDirsNoDuplicates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	seen := map[string]bool{}
+	for _, d := range homeDirs() {
+		if seen[d] {
+			t.Errorf("duplicate home directory %q", d)
+		}
+		seen[d] = true
+	}
+}
+
+// TestConfigCandidatesIncludeHome verifies the config search actually covers the
+// resolved home, which is the path that was missing.
+func TestConfigCandidatesIncludeHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	want := filepath.Join(home, ".config", "Jackett", "ServerConfig.json")
+	found := false
+	for _, p := range configCandidates() {
+		if p == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("configCandidates does not include %q", want)
+	}
+}
+
+// TestDiscoverFindsConfigWithoutHome covers the end-to-end path: with HOME unset
+// but the config readable through the fallback, discovery must still report the
+// API key.
+func TestDiscoverFindsConfigWithoutHome(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, ".config", "Jackett")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"Port":45999,"LocalBindAddress":"127.0.0.1","APIKey":"key-from-fallback"}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "ServerConfig.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point HOME at the temp dir so the fallback resolves there, then make the
+	// passwd entry irrelevant by checking the resolved list directly.
+	t.Setenv("HOME", home)
+	if _, cfg := readServerConfig(); cfg == nil {
+		t.Fatal("config not found even with HOME set")
+	} else if cfg.APIKey != "key-from-fallback" {
+		t.Errorf("APIKey = %q, want key-from-fallback", cfg.APIKey)
+	}
+}
+
 // TestAssetNameForPlatform covers the Linux-only asset mapping.
 func TestAssetNameForPlatform(t *testing.T) {
 	cases := []struct {

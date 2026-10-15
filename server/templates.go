@@ -1644,7 +1644,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }
 
       // ---- Jackett setup panel (discovery / install) ----
-      var jkSetupState={configured:{{if .JackettURL}}true{{else}}false{{end}}};
+      // A URL alone is not enough to search: the Torznab API needs the key. Both
+      // must be present for the panel to report a usable connection, which is
+      // also the condition the backend enforces.
+      var jkSetupState={configured:{{if and .JackettURL .JackettAPIKey}}true{{else}}false{{end}}};
 
       function renderJKSetup(info){
         var el=document.getElementById('jk-setup-body');
@@ -1695,7 +1698,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           }
           var msg='{{index .T "jk_found"}}: '+(j.url||'')+(j.running?'':' ({{index .T "jk_not_running"}})');
           jkSetupMsg(msg,false);
-          jkSetupState.configured=!!(j.url&&j.apikey);
+          // The page is reloaded so the panel re-renders from the server's view
+          // of the stored configuration. Deriving "configured" from the probe
+          // reply was wrong: discovery reads Jackett's config file, which may be
+          // unreadable (for example HOME unset under systemd) even though the
+          // saved URL and key are perfectly valid — and that marked a working
+          // setup as unconfigured.
           setTimeout(function(){location.reload();},900);
         }catch(e){jkSetupMsg(e.message,true);}
       }

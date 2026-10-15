@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.12
+
+### 修复
+- **Jackett 明明可用却显示「尚未配置」**：Jackett 的配置保存在 `~/.config/Jackett`，而 systemd 启动服务时环境是空的——**`HOME` 未设置**。`os.UserHomeDir()` 因此在服务环境下失败，配置文件的候选路径里没有它，读不到 API Key，前端便判定为未配置。实测线上：配置文件存在、API Key 有效、Jackett 正常运行，但 `discover` 返回的 `config_path` 与 `apikey` 都是空的。现改为从 `$HOME`、passwd 条目、以及 root 的惯例目录依次解析，只采纳真实存在的目录。
+- **点「重新检测」会把正常配置判成未配置**：该动作以探测结果反推是否已配置（`!!(j.url && j.apikey)`）。探测读的是磁盘配置，可能因上述原因读不到，而**已保存的地址与 Key 其实完全可用**——于是一次成功的探测反而把状态改坏了。现改为保存后重新加载页面，由服务端按已保存的配置渲染。
+- **「已连接」的判定标准不一致**：面板只检查地址是否存在，而后端要求地址与 API Key 同时具备（Torznab 调用需要 Key）。现统一为两者齐备才算已连接。
+
+### 变更
+- **systemd 服务不再连带杀死 Jackett**：Jackett 由 pan-fetcher 启动，但应当独立存活。systemd 默认的 `KillMode=control-group` 会杀死 unit cgroup 内的**所有**进程，因此重启 pan-fetcher（包括面板内的自更新）会把 Jackett 一并停掉，搜索随之失效，直到有人手动重新启动。现改为 `KillMode=process`。
+- **systemd 服务显式设置 `HOME`**：为 Jackett 的配置发现提供稳定依据，不再依赖调用环境。
+
 ## v2.0.11
 
 ### 新增

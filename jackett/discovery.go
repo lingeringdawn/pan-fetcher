@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -184,6 +185,12 @@ func portFromURL(raw string) int {
 // Jackett resolves this file from the user's config directory, not from the
 // directory the binary lives in, so an install managed by pan-fetcher still
 // reads and writes the location listed first here.
+//
+// The home directory is resolved from several sources, not just $HOME. A
+// systemd service does not set HOME unless the unit asks for it, so relying on
+// os.UserHomeDir alone made discovery fail on exactly the deployment this
+// project targets: Jackett's config was present and its API key valid, but the
+// panel reported it as unconfigured because the file could not be located.
 func configCandidates() []string {
 	var paths []string
 
@@ -191,7 +198,7 @@ func configCandidates() []string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		paths = append(paths, filepath.Join(xdg, "Jackett", "ServerConfig.json"))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	for _, home := range homeDirs() {
 		paths = append(paths, filepath.Join(home, ".config", "Jackett", "ServerConfig.json"))
 	}
 
@@ -226,6 +233,50 @@ func configCandidates() []string {
 		}
 		seen[clean] = true
 		out = append(out, clean)
+	}
+	return out
+}
+
+// homeDirs returns every plausible home directory for the current user, most
+// likely first.
+//
+// $HOME is authoritative when set. The fallbacks cover a systemd service, which
+// starts with an empty environment: the passwd entry of the running user is the
+// correct answer there, and the conventional root home is a last resort for the
+// case where the passwd lookup itself fails (a static binary, a minimal image).
+//
+// Only directories that exist are returned, so a wrong guess cannot shadow the
+// real one during the ordered search in readServerConfig.
+func homeDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		clean := filepath.Clean(p)
+		if seen[clean] {
+			return
+		}
+		if st, err := os.Stat(clean); err != nil || !st.IsDir() {
+			return
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+
+	add(os.Getenv("HOME"))
+
+	// The passwd entry is authoritative under a service manager.
+	if u, err := user.Current(); err == nil {
+		add(u.HomeDir)
+	}
+	// Last resort: the conventional root home. pan-fetcher runs as root in the
+	// documented systemd deployment, and Jackett (started by us with HOME set)
+	// writes its config there.
+	if os.Geteuid() == 0 {
+		add("/root")
 	}
 	return out
 }

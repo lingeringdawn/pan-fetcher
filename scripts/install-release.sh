@@ -13,6 +13,10 @@ COOKIES_FILE="${DATA_DIR}/.cookies"
 DB_FILE="${DATA_DIR}/db.sqlite"
 SERVICE_FILE='/etc/systemd/system/pan-fetcher.service'
 SERVICE_PORT='8115'
+# Home directory given to the service. Jackett keeps its configuration in
+# ~/.config/Jackett, and it is started by pan-fetcher with this HOME, so the
+# two must agree or discovery looks in the wrong place.
+HOME_DIR="${HOME:-/root}"
 
 info() {
   echo "info: $*"
@@ -159,6 +163,19 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${DATA_DIR}
 ExecStart=${BIN_PATH} server
+
+# HOME is set explicitly. systemd starts services with an empty environment, and
+# without HOME the Jackett discovery cannot locate ~/.config/Jackett: os.UserHomeDir
+# fails, the config file is never found, and the panel reports a running, correctly
+# configured Jackett as "not configured".
+Environment=HOME=${HOME_DIR}
+
+# Jackett is started by pan-fetcher but must outlive it. The default
+# KillMode=control-group kills every process in the unit's cgroup on restart, so
+# restarting pan-fetcher (including its in-panel self-update) would take Jackett
+# down with it and leave search broken until someone started it by hand.
+KillMode=process
+
 Restart=always
 RestartSec=10s
 StartLimitIntervalSec=300
