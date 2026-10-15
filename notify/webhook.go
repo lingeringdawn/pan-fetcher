@@ -54,10 +54,27 @@ func VerifySignature(secret string, body []byte, header string) bool {
 	return hmac.Equal([]byte(want), []byte(header))
 }
 
-// WebhookChannel POSTs the event JSON to a URL, optionally signing it.
+// Webhook kinds. The kind selects the request format, not the routing: both
+// are ordinary channels in the same list with the same event subscriptions.
+const (
+	// KindGeneric posts the event as JSON and signs it with HMAC when a secret
+	// is set. This is the default.
+	KindGeneric = "generic"
+	// KindWework posts WeChat Work's markdown payload. It exists so the WeChat
+	// Work webhook configured by earlier versions keeps working after being
+	// migrated into this list — the destination expects that shape and rejects
+	// anything else.
+	KindWework = "wework"
+)
+
+// WebhookChannel delivers events to one URL.
+//
+// The kind decides the body format; everything else (subscriptions, enabling,
+// retry policy) is shared, so the settings page can present one list.
 type WebhookChannel struct {
 	id      string
 	name    string
+	kind    string
 	url     string
 	secret  string
 	events  []EventType
@@ -69,10 +86,22 @@ type WebhookChannel struct {
 type WebhookConfig struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
+	Kind    string   `json:"kind,omitempty"`
 	URL     string   `json:"url"`
 	Secret  string   `json:"secret,omitempty"`
 	Events  []string `json:"events,omitempty"`
 	Enabled bool     `json:"enabled"`
+}
+
+// NormalizeKind maps an absent or unknown kind onto a known one.
+//
+// Empty means generic: that is what every entry written before kinds existed
+// was, so an upgrade keeps them behaving as they did.
+func NormalizeKind(k string) string {
+	if strings.EqualFold(strings.TrimSpace(k), KindWework) {
+		return KindWework
+	}
+	return KindGeneric
 }
 
 // NewWebhookChannel builds a channel from stored configuration.
@@ -84,6 +113,7 @@ func NewWebhookChannel(cfg WebhookConfig) *WebhookChannel {
 	return &WebhookChannel{
 		id:      cfg.ID,
 		name:    cfg.Name,
+		kind:    NormalizeKind(cfg.Kind),
 		url:     strings.TrimSpace(cfg.URL),
 		secret:  cfg.Secret,
 		events:  parseEventTypes(cfg.Events),
@@ -115,6 +145,12 @@ func (w *WebhookChannel) Send(ev Event) error {
 	}
 	if !wants(w, ev.Type) {
 		return nil
+	}
+
+	// WeChat Work takes its own payload shape and is not signed; it
+	// authenticates by the secret embedded in the URL.
+	if w.kind == KindWework {
+		return sendWework(w.url, w.client, ev.Body)
 	}
 
 	body, err := ev.Payload()
@@ -206,7 +242,6 @@ func TestWebhookChannel(cfg WebhookConfig) error {
 	log.Printf("[notify] webhook test ok: %s", redactURL(ch.url))
 	return nil
 }
-
 // redactURL hides the path and query of a webhook URL for logging.
 //
 // Webhook URLs commonly embed a secret token in the path (that is how Slack,

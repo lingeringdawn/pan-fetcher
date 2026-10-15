@@ -377,42 +377,179 @@ func TestTestWebhookChannelSucceeds(t *testing.T) {
 	}
 }
 
-// TestBuildChannelsIncludesWeworkOnlyWhenConfigured verifies the legacy channel
-// appears exactly when a URL is set, which is what keeps existing installs
-// behaving identically.
-func TestBuildChannelsIncludesWeworkOnlyWhenConfigured(t *testing.T) {
-	if got := BuildChannels("", nil); len(got) != 0 {
+// TestBuildChannels verifies every stored entry becomes a channel, in order.
+func TestBuildChannels(t *testing.T) {
+	if got := BuildChannels(nil); len(got) != 0 {
 		t.Errorf("no configuration should yield no channels, got %d", len(got))
 	}
-	got := BuildChannels("https://example.com/wework", []WebhookConfig{
-		{ID: "a", URL: "https://example.com/1", Enabled: true},
+	got := BuildChannels([]WebhookConfig{
+		{ID: "a", Name: "one", URL: "https://example.com/1", Enabled: true},
+		{ID: "b", Name: "two", Kind: KindWework, URL: "https://example.com/2", Enabled: true},
 	})
 	if len(got) != 2 {
-		t.Fatalf("expected wework + 1 webhook, got %d", len(got))
+		t.Fatalf("expected 2 channels, got %d", len(got))
 	}
-	if got[0].Name() != "企业微信" {
-		t.Errorf("first channel = %q, want 企业微信", got[0].Name())
+	if got[0].Name() != "one" || got[1].Name() != "two" {
+		t.Errorf("order not preserved: %q, %q", got[0].Name(), got[1].Name())
 	}
 }
 
-// TestWeworkChannelDoesNotTakeLogEvents verifies log lines are not delivered
-// twice.
+// TestWeworkKindUsesMarkdownPayload verifies a WeChat Work entry sends the
+// envelope that destination requires, not the generic event JSON.
 //
-// The WeChat Work URL is pushed to directly by the log throttler, which owns
-// the notify_log toggle and the per-second rate limit. If this channel also
-// subscribed to log events, every line would be sent twice.
-func TestWeworkChannelDoesNotTakeLogEvents(t *testing.T) {
-	ch := &weworkChannel{url: "https://example.com/hook", client: http.DefaultClient}
-	if wants(ch, EventLog) {
-		t.Error("the wework channel must not subscribe to log events")
+// WeChat Work rejects anything but its own msgtype/markdown shape, so a
+// migrated entry that sent JSON would silently stop delivering.
+func TestWeworkKindUsesMarkdownPayload(t *testing.T) {
+	var body string
+	var sig string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		sig = r.Header.Get(HeaderSignature)
+	}))
+	defer srv.Close()
+
+	ch := NewWebhookChannel(WebhookConfig{
+		ID: "w", Kind: KindWework, URL: srv.URL, Enabled: true,
+		// A secret is deliberately set: WeChat Work authenticates by the token
+		// in its URL, so the channel must not add a signature.
+		Secret: "ignored",
+	})
+	if err := ch.Send(Event{Type: EventRSSFound, Title: "t", Body: "## 标题"}); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
-	// It must still take everything else.
-	for _, ty := range AllEventTypes() {
-		if ty == EventLog {
-			continue
+	var payload struct {
+		MsgType  string `json:"msgtype"`
+		Markdown struct {
+			Content string `json:"content"`
+		} `json:"markdown"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("wework payload is not the expected envelope: %v (%s)", err, body)
+	}
+	if payload.MsgType != "markdown" {
+		t.Errorf("msgtype = %q, want markdown", payload.MsgType)
+	}
+	if payload.Markdown.Content != "## 标题" {
+		t.Errorf("content = %q, want the event body", payload.Markdown.Content)
+	}
+	if sig != "" {
+		t.Errorf("a wework entry must not be signed, got %q", sig)
+	}
+}
+
+// TestNormalizeKind verifies an absent kind means generic, which is what every
+// entry written before kinds existed was.
+func TestNormalizeKind(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", KindGeneric},
+		{"generic", KindGeneric},
+		{"wework", KindWework},
+		{"WeWork", KindWework},
+		{"  wework  ", KindWework},
+		{"bogus", KindGeneric},
+	}
+	for _, c := range cases {
+		if got := NormalizeKind(c.in); got != c.want {
+			t.Errorf("NormalizeKind(%q) = %q, want %q", c.in, got, c.want)
 		}
-		if !wants(ch, ty) {
-			t.Errorf("the wework channel should receive %s", ty)
+	}
+}
+
+// TestMigrateLegacyWework is the regression test for folding the old WeChat Work
+// setting into the channel list.
+func TestMigrateLegacyWework(t *testing.T) {
+	const legacy = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc"
+
+	// Nothing configured: no migration.
+	out, changed := MigrateLegacyWework("", nil)
+	if changed || len(out) != 0 {
+		t.Errorf("empty legacy URL should not migrate, got %v (changed=%v)", out, changed)
+	}
+
+	// A legacy URL with no existing entries becomes one wework entry.
+	out, changed = MigrateLegacyWework(legacy, nil)
+	if !changed {
+		t.Fatal("a legacy URL should migrate")
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(out))
+	}
+	if out[0].Kind != KindWework {
+		t.Errorf("kind = %q, want %q", out[0].Kind, KindWework)
+	}
+	if out[0].URL != legacy {
+		t.Errorf("URL = %q, want the legacy URL", out[0].URL)
+	}
+	if !out[0].Enabled {
+		t.Error("the migrated entry should be enabled")
+	}
+	if out[0].ID == "" {
+		t.Error("the migrated entry needs an id")
+	}
+
+	// Running it again must not duplicate: this runs at every startup.
+	again, _ := MigrateLegacyWework(legacy, out)
+	if len(again) != 1 {
+		t.Errorf("migration is not idempotent: %d entries", len(again))
+	}
+
+	// An existing wework entry means the legacy setting is redundant: report
+	// changed so the caller clears it, but do not add anything.
+	existing := []WebhookConfig{{ID: "x", Kind: KindWework, URL: "https://example.com/other"}}
+	out2, changed2 := MigrateLegacyWework(legacy, existing)
+	if !changed2 {
+		t.Error("an existing wework entry should still report changed (to clear the legacy value)")
+	}
+	if len(out2) != 1 {
+		t.Errorf("no entry should be added, got %d", len(out2))
+	}
+
+	// Other entries are preserved, with the migrated one first.
+	generic := []WebhookConfig{{ID: "g", URL: "https://example.com/g", Enabled: true}}
+	out3, _ := MigrateLegacyWework(legacy, generic)
+	if len(out3) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(out3))
+	}
+	if out3[0].Kind != KindWework {
+		t.Error("the migrated entry should come first")
+	}
+	if out3[1].ID != "g" {
+		t.Error("the existing entry was reordered")
+	}
+}
+
+// TestMigratedWeworkSubscriptionsExcludeLog verifies the migration does not
+// subscribe the new entry to log events, which the log pusher already handles.
+func TestMigratedWeworkSubscriptionsExcludeLog(t *testing.T) {
+	out, _ := MigrateLegacyWework("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc", nil)
+	if len(out) != 1 {
+		t.Fatal("expected one entry")
+	}
+	for _, e := range out[0].Events {
+		if e == string(EventLog) {
+			t.Error("the migrated entry must not subscribe to log events (they would be sent twice)")
+		}
+	}
+	if len(out[0].Events) == 0 {
+		t.Error("the migrated entry should preserve the task/RSS notifications the old switches governed")
+	}
+}
+
+// TestIsWeworkURL pins the heuristic used during migration.
+func TestIsWeworkURL(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc", true},
+		{"https://example.com/cgi-bin/webhook/send?key=abc", true},
+		{"https://example.com/hook", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isWeworkURL(c.url); got != c.want {
+			t.Errorf("isWeworkURL(%q) = %v, want %v", c.url, got, c.want)
 		}
 	}
 }

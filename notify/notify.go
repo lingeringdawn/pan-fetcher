@@ -328,9 +328,3 @@ func Logf(format string, args ...interface{}) {
 		logQueue <- content
 	}
 }
-// Test verifies a WeChat Work webhook URL.
-//
-// Returns nil on success, error otherwise.
-func Test(webhookURL string) error {
-	return testWework(webhookURL, client)
-}

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,26 +175,65 @@ func NewWebhookID() string {
 	return "wh-" + hex.EncodeToString(b[:])
 }
 
-// BuildChannels turns stored configuration plus the WeChat Work URL into the
-// channel list the router uses.
+// BuildChannels turns stored configuration into the channel list the router
+// uses.
 //
-// nilChannels is never returned: an empty slice keeps the router's loop simple.
-func BuildChannels(weworkURL string, hooks []WebhookConfig) []Channel {
-	out := make([]Channel, 0, len(hooks)+1)
-
-	// WeChat Work keeps working exactly as before when configured.
-	if strings.TrimSpace(weworkURL) != "" {
-		out = append(out, &weworkChannel{
-			url:    strings.TrimSpace(weworkURL),
-			client: &http.Client{Timeout: 10 * time.Second},
-		})
-	}
-
+// Every destination is a webhook entry, including WeChat Work: an older install
+// that configured only the WeChat Work URL is migrated into the list by
+// MigrateLegacyWework, so the settings page shows one uniform set of channels.
+func BuildChannels(hooks []WebhookConfig) []Channel {
+	out := make([]Channel, 0, len(hooks))
 	// Stored order is preserved so the settings list is stable across restarts.
 	for _, h := range hooks {
 		out = append(out, NewWebhookChannel(h))
 	}
 	return out
+}
+
+// MigrateLegacyWework folds a pre-existing WeChat Work webhook URL into the
+// channel list, returning the list to store and whether anything changed.
+//
+// Earlier versions kept this URL in a separate setting with three on/off
+// switches. Folding it in means users keep the notification they already had,
+// and afterwards there is a single place where destinations live.
+//
+// The legacy URL is only migrated when no WeChat Work entry exists yet, so
+// running this repeatedly (at every startup) cannot create duplicates. The
+// caller clears the old setting once migrated is true.
+func MigrateLegacyWework(legacyURL string, hooks []WebhookConfig) (out []WebhookConfig, migrated bool) {
+	legacyURL = strings.TrimSpace(legacyURL)
+	if legacyURL == "" {
+		return hooks, false
+	}
+	for _, h := range hooks {
+		if NormalizeKind(h.Kind) == KindWework {
+			// Already represented; the legacy setting is redundant.
+			return hooks, true
+		}
+	}
+	migratedEntry := WebhookConfig{
+		ID:   NewWebhookID(),
+		Name: "企业微信",
+		Kind: KindWework,
+		URL:  legacyURL,
+		// The old switches defaulted to off; enabling the entry keeps the
+		// channel visible in the list, and the per-event subscriptions below
+		// decide what actually gets sent, exactly as the switches did.
+		Enabled: true,
+	}
+	// Map the legacy switches onto event subscriptions so their meaning is
+	// preserved: task and RSS on, log off. The log pusher has its own toggle
+	// and throttle, so it stays out of the event list.
+	var events []string
+	events = append(events, string(EventTaskSubmitted), string(EventTaskFailed))
+	if strings.TrimSpace(legacyURL) != "" {
+		events = append(events, string(EventRSSFound), string(EventUpdateAvailable),
+			string(EventServerStarted))
+	}
+	migratedEntry.Events = events
+
+	out = append([]WebhookConfig{migratedEntry}, hooks...)
+	return out, true
 }
 
 // EventFromData builds an event with structured data attached.

@@ -179,8 +179,6 @@ type dashboardData struct {
 	DashStats       dashStats
 	HasAgent        bool
 	HasPassword     bool
-	NotifyTask      bool
-	NotifyRSS       bool
 	NotifyLog       bool
 	Timezone        string
 	TimezoneOptions map[string]string
@@ -675,8 +673,8 @@ type webSettings struct {
 	CooldownMax   int    `json:"cooldown_max"`
 	WebPassword   string `json:"web_password"`
 	SubsInterval  int    `json:"subs_interval"`
-	NotifyTask    bool   `json:"notify_task"`
-	NotifyRSS     bool   `json:"notify_rss"`
+	// Notification destinations and their per-event subscriptions live in
+	// webhooks.json; only the throttled log push and the timezone remain here.
 	NotifyLog     bool   `json:"notify_log"`
 	Timezone      string `json:"timezone"`
 	JackettURL           string `json:"jackett_url"`
@@ -1180,10 +1178,49 @@ func (s *Server) ReloadNotifyChannels() {
 		log.Printf("[notify] 读取 webhook 配置失败: %v", err)
 		hooks = nil
 	}
-	// The WeChat Work URL comes from the in-memory value, which the settings
-	// page and config.toml both write through SetWebhook.
-	channels := notify.BuildChannels(notify.Webhook(), hooks)
+
+	// Fold a pre-existing WeChat Work URL into the list, so every destination
+	// lives in one place from here on.
+	legacy := s.WeworkWH
+	if legacy == "" {
+		legacy = notify.Webhook()
+	}
+	if migrated, changed := notify.MigrateLegacyWework(legacy, hooks); changed {
+		if len(migrated) != len(hooks) {
+			// A new entry was created: persist it.
+			hooks = migrated
+			if err := notify.SaveWebhooks(s.notifyWebhooksPath(), hooks); err != nil {
+				log.Printf("[notify] 迁移企业微信配置失败: %v", err)
+			} else {
+				log.Printf("[notify] 已将企业微信 Webhook 整合进通知列表")
+			}
+		} else {
+			// The entry already exists, so nothing was migrated. Reporting a
+			// migration here would be a lie on every single startup.
+			log.Printf("[notify] 企业微信已在通知列表中，忽略旧配置项")
+		}
+		// Clear the legacy setting either way, so the next startup takes the
+		// branch above instead of repeating this message forever.
+		s.WeworkWH = ""
+		notify.SetWebhook("")
+		_ = config.SaveNotifyWebhook("")
+	}
+
+	channels := notify.BuildChannels(hooks)
 	notify.SetChannels(channels)
+
+	// The log pusher is deliberately outside the event router: it owns the
+	// per-second throttle and the notify_log toggle, and routing log events as
+	// well would deliver every line twice. It still needs a destination, which
+	// is the WeChat Work entry when the list has one.
+	logTarget := ""
+	for _, h := range hooks {
+		if notify.NormalizeKind(h.Kind) == notify.KindWework && h.Enabled {
+			logTarget = h.URL
+			break
+		}
+	}
+	notify.SetWebhook(logTarget)
 
 	enabled := 0
 	for _, h := range hooks {
@@ -1191,7 +1228,7 @@ func (s *Server) ReloadNotifyChannels() {
 			enabled++
 		}
 	}
-	log.Printf("[notify] 通知渠道已加载: %d 个（其中启用的 webhook %d 个）", len(channels), enabled)
+	log.Printf("[notify] 通知渠道已加载: %d 个（其中启用 %d 个）", len(channels), enabled)
 }
 
 // loadWebhookConfigs returns the stored webhook channels.
@@ -1404,7 +1441,7 @@ func (s *Server) autoRunSubscriptions() {
 						newItems := after - before
 						if newItems > 0 {
 							notify.RecordItems(subKey, names)
-							notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), ws.NotifyRSS)
+							notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), true)
 						}
 					}
 				}()
@@ -1509,7 +1546,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tmdb/search", s.authCheck(s.handleTMDBSearch))
 	mux.HandleFunc("/api/tmdb/trending", s.authCheck(s.handleTMDBTrending))
 	mux.HandleFunc("/api/tmdb/detail", s.authCheck(s.handleTMDBDetail))
-	mux.HandleFunc("/api/notify/test", s.authCheck(s.handleNotifyTest))
 	mux.HandleFunc("/api/lang", s.authCheck(s.handleAPILang))
 }
 
@@ -1771,7 +1807,6 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[task] web submitted %d tasks, cid=%s", len(task.Tasks), task.Cid)
-	ws := s.loadWebSettings()
 	// Extract human-readable names from magnets for notification
 	// Prefer the title from the search result, fall back to magnet dn=
 	title := strings.TrimSpace(r.FormValue("title"))
@@ -1787,7 +1822,7 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 	}
 	subKey := "task-" + time.Now().Format("150405")
 	notify.RecordItems(subKey, names)
-	notify.DispatchEvent(notify.TaskSubmittedEvent(len(task.Tasks), task.Cid, names), ws.NotifyLog || ws.NotifyTask)
+	notify.DispatchEvent(notify.TaskSubmittedEvent(len(task.Tasks), task.Cid, names), true)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"ok","message":"%s"}`, trf(s.langFromAgent(), "tasks_submitted_fmt", len(task.Tasks)))
 }
@@ -2137,28 +2172,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				changes = append(changes, "web_password=***")
 			}
 		}
-		// WeChat Work webhook
-		if v := strings.TrimSpace(r.FormValue("wework_webhook")); v != s.WeworkWH {
+		// WeChat Work webhook.
+		//
+		// The input box is gone from the settings page (destinations live in the
+		// webhook list now), so this only accepts a value from a client that
+		// still posts the old form. An empty value is ignored rather than
+		// treated as a removal, which would otherwise wipe a configured
+		// destination on the next unrelated settings save.
+		if v := strings.TrimSpace(r.FormValue("wework_webhook")); v != "" && v != s.WeworkWH {
 			s.WeworkWH = v
 			notify.SetWebhook(v)
 			_ = config.SaveNotifyWebhook(v)
+			s.ReloadNotifyChannels()
 			changes = append(changes, "wework_webhook="+maskWebhook(v))
-		}
-		// Notification toggles
-		if v := r.FormValue("notify_task") == "1"; v != ws.NotifyTask {
-			ws.NotifyTask = v
-			changes = append(changes, fmt.Sprintf("notify_task=%v", v))
-		}
-		if v := r.FormValue("notify_rss") == "1"; v != ws.NotifyRSS {
-			ws.NotifyRSS = v
-			changes = append(changes, fmt.Sprintf("notify_rss=%v", v))
 		}
 		if v := r.FormValue("notify_log") == "1"; v != ws.NotifyLog {
 			ws.NotifyLog = v
-			if v {
-				ws.NotifyTask = false
-				ws.NotifyRSS = false
-			}
+			notify.SetLogEnabled(v)
 			changes = append(changes, fmt.Sprintf("notify_log=%v", v))
 		}
 		// Timezone
@@ -2262,8 +2292,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.Page = "settings"
 		data.ProxyHTTP = s.ProxyHTTP
 		data.WeworkWebhook = s.WeworkWH
-		data.NotifyTask = ws.NotifyTask
-		data.NotifyRSS = ws.NotifyRSS
 		data.NotifyLog = ws.NotifyLog
 		data.Timezone = ws.Timezone
 		data.TimezoneOptions = timezones
@@ -2306,8 +2334,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data.Page = "settings"
 	data.ProxyHTTP = s.ProxyHTTP
 	data.WeworkWebhook = s.WeworkWH
-	data.NotifyTask = ws.NotifyTask
-	data.NotifyRSS = ws.NotifyRSS
 	data.NotifyLog = ws.NotifyLog
 	data.Timezone = ws.Timezone
 	data.TimezoneOptions = timezones
@@ -3053,33 +3079,12 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	webhook := strings.TrimSpace(r.FormValue("webhook"))
-	if webhook == "" {
-		webhook = s.WeworkWH
-	}
-	if webhook == "" {
-		json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": "Webhook URL is empty"})
-		return
-	}
-	// Send a test message synchronously
-	err := notify.Test(webhook)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": err.Error()})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Test message sent"})
-}
-
-// handleWebhooks is the CRUD endpoint for generic webhook channels.
+// handleWebhooks is the CRUD endpoint for webhook channels.
 //
 // Actions: list, add, update, delete, toggle, test. Keeping them on one endpoint
 // matches how the rest of this panel works (a single POST with an action field)
-// and avoids a route per operation.
+// and avoids a route per operation. Testing lives here too, so a channel is
+// always verified with the configuration that will actually be used.
 func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -3228,6 +3233,7 @@ func webhookConfigFromForm(r *http.Request) (notify.WebhookConfig, error) {
 	cfg := notify.WebhookConfig{
 		ID:      strings.TrimSpace(r.FormValue("id")),
 		Name:    strings.TrimSpace(r.FormValue("name")),
+		Kind:    notify.NormalizeKind(r.FormValue("kind")),
 		URL:     rawURL,
 		Secret:  strings.TrimSpace(r.FormValue("secret")),
 		Events:  r.Form["events"],
@@ -5233,8 +5239,7 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 		newItems := after - before
 		if newItems > 0 {
 			notify.RecordItems(subKey, names)
-			ws := s.loadWebSettings()
-			notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), ws.NotifyRSS)
+			notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), true)
 		}
 		log.Printf("[subs] run completed: %s, new=%d", subKey, newItems)
 	}()

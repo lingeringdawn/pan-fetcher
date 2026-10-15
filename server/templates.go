@@ -1515,20 +1515,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
       // Init pagination bar on page load
       renderPagination();
-      async function testWebhook(){
-        var input=document.getElementById('wework_webhook');
-        var url=input?input.value.trim():'';
-        if(!url){alertModal('请先填写 Webhook 地址');return;}
-        var btn=event.target;
-        btn.disabled=true;btn.textContent='…';
-        try{
-          var r=await fetch('/api/notify/test',{method:'POST',body:new URLSearchParams({webhook:url}),headers:{'X-Requested-With':'XMLHttpRequest'}});
-          var j=await r.json();
-          if(j.status==='ok'){alertModal('✅ 测试消息已发送，请查看企业微信');}
-          else{alertModal('❌ '+j.message);}
-        }catch(e){alertModal('请求失败: '+e.message);}
-        btn.disabled=false;btn.textContent='测试';
-      }
       async function addTaskWithBrowse(el){
         pendingMagnet=el.getAttribute('data-magnet');
         pendingTitle=el.getAttribute('data-title')||'';
@@ -2038,7 +2024,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(!j.ok){box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>';return;}
             webhookEvents=j.events||[];
-            renderWebhooks(j.webhooks||[]);
+            applyWebhooks(j.webhooks||[]);
           }catch(e){
             box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
           }
@@ -2065,28 +2051,40 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             box.innerHTML='<div class="hint">{{index .T "webhook_empty"}}</div>';
             return;
           }
+          var labels={};
+          webhookEvents.forEach(function(e){labels[e.value]=e.label;});
           var h='';
           list.forEach(function(w){
+            var kind=w.kind||'generic';
             h+='<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--bg);">';
             h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
             h+='<strong style="font-size:13px;">'+escHTML(w.name||w.id)+'</strong>';
-            h+='<code style="font-size:11px;color:var(--muted);word-break:break-all;">'+escHTML(w.url)+'</code>';
+            h+='<span class="badge" style="font-size:10px;">'+(kind==='wework'?'{{index .T "webhook_kind_wework"}}':'JSON')+'</span>';
             h+=w.secret?'<span class="badge badge-done" style="font-size:10px;">HMAC</span>':'';
-            h+=w.enabled?'<span class="badge badge-running" style="font-size:10px;">{{index .T "webhook_enabled"}}</span>'
+            h+=w.enabled?'<span class="badge badge-running" style="font-size:10px;">{{index .T "enabled"}}</span>'
                         :'<span class="badge" style="font-size:10px;opacity:.6;">{{index .T "disabled"}}</span>';
             h+='<span style="flex:1;"></span>';
-            h+='<button type="button" onclick="webhookToggle(\''+w.id+'\','+(w.enabled?'false':'true')+')" style="margin:0;padding:3px 10px;font-size:11px;">'+(w.enabled?'{{index .T "disable"}}':'{{index .T "enable"}}')+'</button>';
+            h+='<button type="button" onclick="webhookEdit(\''+w.id+'\')" style="margin:0;padding:3px 10px;font-size:11px;">{{index .T "webhook_edit"}}</button>';
+            h+='<button type="button" onclick="webhookToggle(\''+w.id+'\','+(w.enabled?'false':'true')+')" style="margin:0 0 0 4px;padding:3px 10px;font-size:11px;">'+(w.enabled?'{{index .T "disable"}}':'{{index .T "enable"}}')+'</button>';
             h+='<button type="button" onclick="webhookTest(\''+w.id+'\')" style="margin:0 0 0 4px;padding:3px 10px;font-size:11px;background:var(--accent-2);">{{index .T "webhook_test"}}</button>';
             h+='<button type="button" onclick="webhookDelete(\''+w.id+'\')" style="margin:0 0 0 4px;padding:3px 10px;font-size:11px;background:var(--danger);">{{index .T "webhook_delete"}}</button>';
             h+='</div>';
+            h+='<div style="font-size:11px;color:var(--muted);margin-top:4px;word-break:break-all;">'+escHTML(w.url)+'</div>';
             if(w.events&&w.events.length){
-              h+='<div style="font-size:11px;color:var(--muted);margin-top:6px;">{{index .T "webhook_events"}}: '+w.events.map(escHTML).join('、')+'</div>';
+              h+='<div style="font-size:11px;color:var(--muted);margin-top:4px;">{{index .T "webhook_events"}}: '
+                +w.events.map(function(e){return escHTML(labels[e]||e);}).join('、')+'</div>';
             }else{
-              h+='<div style="font-size:11px;color:var(--muted);margin-top:6px;">{{index .T "webhook_events_all"}}</div>';
+              h+='<div style="font-size:11px;color:var(--muted);margin-top:4px;">{{index .T "webhook_events_all"}}</div>';
             }
             h+='</div>';
           });
           box.innerHTML=h;
+        }
+
+        // Keep the latest list for the edit form, then render it.
+        function applyWebhooks(list){
+          window.__webhooks=list||[];
+          renderWebhooks(window.__webhooks);
         }
 
         // Minimal escaping: webhook values are user input echoed back into HTML.
@@ -2097,14 +2095,60 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         }
 
         function webhookAdd(){
-          showModal('{{index .T "webhook_add"}}',
-            '<div><label>{{index .T "webhook_name"}}</label><input id="wh-name" placeholder="My hook" style="width:100%;"></div>'
-            +'<div style="margin-top:8px;"><label>{{index .T "webhook_url"}}</label><input id="wh-url" placeholder="https://example.com/hook" style="width:100%;"></div>'
-            +'<div style="margin-top:8px;"><label>{{index .T "webhook_secret"}}</label><input id="wh-secret" placeholder="{{index .T "webhook_secret_ph"}}" style="width:100%;"></div>'
-            +'<div style="margin-top:10px;"><label>{{index .T "webhook_events"}}</label><div style="margin-top:4px;">'+webhookEventCheckboxes([])+'</div>'
-            +'<div class="hint" style="font-size:11px;">{{index .T "webhook_events_all"}}</div></div>',
+          webhookForm('add','',{
+            name:'', url:'', kind:'generic', events:[]
+          });
+        }
+
+        // Adding a WeChat Work entry pre-fills the kind and a recognizable name,
+        // so the destination's payload format is right without the user having
+        // to know that the two differ.
+        function webhookAddWework(){
+          webhookForm('add','',{
+            name:'{{index .T "wework_label"}}',
+            url:'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=',
+            kind:'wework',
+            events:[]
+          });
+        }
+
+        function webhookEdit(id){
+          var w=(window.__webhooks||[]).filter(function(x){return x.id===id;})[0];
+          if(!w)return;
+          webhookForm('update',id,{
+            name:w.name||'', url:w.url||'', kind:w.kind||'generic', events:w.events||[]
+          });
+        }
+
+        function webhookForm(action,id,w){
+          var kind=w.kind||'generic';
+          var h='<div><label>{{index .T "webhook_kind"}}</label>'
+            +'<select id="wh-kind" style="width:100%;" onchange="webhookKindChanged()">'
+            +'<option value="generic"'+(kind==='generic'?' selected':'')+'>{{index .T "webhook_kind_generic"}}</option>'
+            +'<option value="wework"'+(kind==='wework'?' selected':'')+'>{{index .T "webhook_kind_wework"}}</option>'
+            +'</select><div class="hint" style="font-size:11px;" id="wh-kind-hint"></div></div>'
+            +'<div style="margin-top:8px;"><label>{{index .T "webhook_name"}}</label><input id="wh-name" value="'+escHTML(w.name)+'" style="width:100%;"></div>'
+            +'<div style="margin-top:8px;"><label>{{index .T "webhook_url"}}</label><input id="wh-url" value="'+escHTML(w.url)+'" style="width:100%;"></div>'
+            +'<div style="margin-top:8px;" id="wh-secret-wrap"><label>{{index .T "webhook_secret"}}</label><input id="wh-secret" placeholder="{{index .T "webhook_secret_ph"}}" style="width:100%;"></div>'
+            +'<div style="margin-top:10px;"><label>{{index .T "webhook_events"}}</label><div style="margin-top:4px;">'+webhookEventCheckboxes(w.events)+'</div>'
+            +'<div class="hint" style="font-size:11px;">{{index .T "webhook_events_all"}}</div></div>';
+          showModal(action==='add'?'{{index .T "webhook_add"}}':'{{index .T "webhook_edit"}}', h,
             [{text:'{{index .T "webhook_cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
-             {text:'{{index .T "webhook_save"}}',cls:'var(--accent-2)',cb:function(){webhookSubmit('add','');}}]);
+             {text:'{{index .T "webhook_save"}}',cls:'var(--accent-2)',cb:function(){webhookSubmit(action,id);}}]);
+          webhookKindChanged();
+        }
+
+        // The secret field is meaningless for WeChat Work (it authenticates by
+        // the token in the URL) and generic entries are not signed without it,
+        // so the hint tracks the selection.
+        function webhookKindChanged(){
+          var sel=document.getElementById('wh-kind');
+          var hint=document.getElementById('wh-kind-hint');
+          var wrap=document.getElementById('wh-secret-wrap');
+          if(!sel)return;
+          var wework=sel.value==='wework';
+          if(hint) hint.textContent=wework?'{{index .T "webhook_kind_wework_hint"}}':'{{index .T "webhook_kind_generic_hint"}}';
+          if(wrap) wrap.style.display=wework?'none':'';
         }
 
         async function webhookSubmit(action,id){
@@ -2112,10 +2156,15 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           fd.set('webhook_action',action);
           if(id) fd.set('id',id);
           var n=document.getElementById('wh-name'), u=document.getElementById('wh-url'), s=document.getElementById('wh-secret');
+          var k=document.getElementById('wh-kind');
           if(n) fd.set('name',n.value.trim());
           if(u) fd.set('url',u.value.trim());
-          if(s) fd.set('secret',s.value.trim());
-          document.querySelectorAll('input[name="events"]:checked').forEach(function(c){fd.append('events',c.value);});
+          if(s&&s.value.trim()) fd.set('secret',s.value.trim());
+          if(k) fd.set('kind',k.value);
+          // The list behind the modal also renders checkboxes with this name, so
+          // scope the query to the modal to avoid collecting both sets.
+          var modal=document.getElementById('g-modal-body')||document;
+          modal.querySelectorAll('input[name="events"]:checked').forEach(function(c){fd.append('events',c.value);});
           fd.set('enabled','1');
           try{
             var r=await fetch('/api/webhooks',{method:'POST',body:fd});
@@ -2123,7 +2172,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
             closeModal();
             webhookMsg(j.msg||'ok',false);
-            renderWebhooks(j.webhooks||[]);
+            applyWebhooks(j.webhooks||[]);
           }catch(e){webhookMsg(e.message,true);}
         }
 
@@ -2136,7 +2185,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var r=await fetch('/api/webhooks',{method:'POST',body:fd});
             var j=await r.json();
             if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
-            renderWebhooks(j.webhooks||[]);
+            applyWebhooks(j.webhooks||[]);
           }catch(e){webhookMsg(e.message,true);}
         }
 
@@ -2150,7 +2199,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
             webhookMsg(j.msg||'ok',false);
-            renderWebhooks(j.webhooks||[]);
+            applyWebhooks(j.webhooks||[]);
           }catch(e){webhookMsg(e.message,true);}
         }
 
@@ -2480,37 +2529,32 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               <label>{{index .T "subs_interval_label"}}</label>
               <input name="subs_interval" type="number" placeholder="{{index .T "subs_interval_ph"}}" value="{{.Settings.SubsInterval}}" min="0" style="font-size:13px;">
             </div>
-            <div style="flex:3;min-width:300px;">
-              <label>{{index .T "wework_label"}}</label>
-              <div style="display:flex;gap:4px;">
-                <input name="wework_webhook" id="wework_webhook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." value="{{.WeworkWebhook}}" style="flex:1;font-size:13px;">
-                <button type="button" onclick="testWebhook()" style="margin-top:0;padding:4px 10px;font-size:12px;white-space:nowrap;">{{index .T "test_btn"}}</button>
-              </div>
-            </div>
-          </div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;align-items:center;font-size:12px;color:var(--muted);">
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;margin:0;">
-              <input type="checkbox" name="notify_task" value="1" style="width:auto;margin:0;"{{if .NotifyTask}} checked{{end}} onclick="if(this.checked){document.getElementsByName('notify_log')[0].checked=false}">{{index .T "notify_task"}}
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;margin:0;">
-              <input type="checkbox" name="notify_rss" value="1" style="width:auto;margin:0;"{{if .NotifyRSS}} checked{{end}} onclick="if(this.checked){document.getElementsByName('notify_log')[0].checked=false}">{{index .T "notify_rss"}}
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;margin:0;">
-              <input type="checkbox" name="notify_log" value="1" style="width:auto;margin:0;"{{if .NotifyLog}} checked{{end}} onclick="if(this.checked){var t=document.getElementsByName('notify_task')[0];var r=document.getElementsByName('notify_rss')[0];if(t)t.checked=false;if(r)r.checked=false;}">{{index .T "notify_log"}}
-            </label>
           </div>
         </fieldset>
 
-        <!-- Group: generic webhooks -->
+        <!-- Group: notifications.
+             Every destination lives in one list, WeChat Work included: the old
+             single-input + on/off switches were folded in by migration, so what
+             gets sent is now decided per entry by event subscription. -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
           <legend style="font-weight:600;font-size:14px;padding:0 8px;">🔔 {{index .T "webhook_section"}}</legend>
           <div class="hint" style="margin-bottom:10px;">{{index .T "webhook_hint"}}</div>
           <div id="webhook-list"><span class="hint">⏳ {{index .T "loading"}}</span></div>
           <div style="margin-top:10px;">
             <button type="button" onclick="webhookAdd()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent-2);">{{index .T "webhook_add"}}</button>
+            <button type="button" onclick="webhookAddWework()" style="margin:0 0 0 6px;padding:5px 12px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">{{index .T "webhook_add_wework"}}</button>
           </div>
           <div class="hint" style="margin-top:10px;font-size:11px;">{{index .T "webhook_signature_doc"}}</div>
           <div id="webhook-msg" style="font-size:12px;margin-top:8px;"></div>
+
+          <!-- Log push stays a toggle rather than an event subscription: it is
+               a throttled stream (one line per second), not a discrete event. -->
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line);">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+              <input type="checkbox" name="notify_log" value="1" style="width:auto;margin:0;"{{if .NotifyLog}} checked{{end}}>{{index .T "notify_log"}}
+            </label>
+            <div class="hint" style="font-size:11px;margin-top:4px;">{{index .T "notify_log_hint"}}</div>
+          </div>
         </fieldset>
 
         <!-- Group: Jackett -->
