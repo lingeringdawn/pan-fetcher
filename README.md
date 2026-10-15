@@ -57,9 +57,11 @@
 - **版本检测与更新**：一键更新，先停止运行中的实例再整体替换，失败不影响现有安装
 - **卸载**：默认保留索引器配置与 API Key，重装可复用
 
+<p align="center"><img src=".github/images/jackett-settings.png" alt="Jackett 设置：运行环境检测与版本更新" width="80%"></p>
+
 索引器库支持批量启用/停用、连接测试，搜索结果标注来源。
 
-<p align="center"><img src=".github/images/1741.jpg" alt="索引器" width="70%"></p>
+<p align="center"><img src=".github/images/indexers.png" alt="索引器管理" width="80%"></p>
 
 ### 📋 RSS 订阅
 
@@ -138,6 +140,8 @@ def verify(body: bytes, signature_header: str) -> bool:
     want = "hmac-sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(want, signature_header)
 ```
+
+<p align="center"><img src=".github/images/notifications.png" alt="通知配置" width="80%"></p>
 
 ### 📜 运行日志
 
@@ -328,7 +332,11 @@ Built-in mode provides:
 - **Version check and update**, stopping the running instance first and replacing the tree wholesale — a failed download leaves the working install untouched
 - **Uninstall**, keeping indexer configuration and the API key by default
 
+<p align="center"><img src=".github/images/jackett-settings.png" alt="Jackett settings: environment check and version update" width="80%"></p>
+
 The indexer catalog supports batch enable/disable and connection tests; results are labelled with their source.
+
+<p align="center"><img src=".github/images/indexers.png" alt="Indexer management" width="80%"></p>
 
 #### 📋 RSS Subscriptions
 
@@ -390,6 +398,8 @@ def verify(body: bytes, signature_header: str) -> bool:
     want = "hmac-sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(want, signature_header)
 ```
+
+<p align="center"><img src=".github/images/notifications.png" alt="Notification configuration" width="80%"></p>
 
 #### 📜 Runtime Log
 
