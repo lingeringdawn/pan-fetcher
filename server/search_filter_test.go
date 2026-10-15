@@ -37,8 +37,9 @@ func TestApplyTitleFilterDropsUnrelated(t *testing.T) {
 		// Unrelated: shares no term with the query.
 		"[Group] Some Other Anime - 07 [1080p]",
 		"Completely Different Movie 2020 1080p",
-		// Shares one term only, so it must still be dropped.
-		"Something else entirely 01",
+		// Shares the word once, but this is a different show: "TARI TARI" is the
+		// name, so a title that says it once is not it.
+		"TARI - 01 [1080p]",
 	)
 	got := gotTitles(applyTitleFilter(in, "TARI TARI"))
 
@@ -47,24 +48,56 @@ func TestApplyTitleFilterDropsUnrelated(t *testing.T) {
 		t.Fatalf("kept %d results, want %d: %v", len(got), want, got)
 	}
 	for _, g := range got {
-		if !strings.Contains(strings.ToLower(g), "tari") {
-			t.Errorf("kept an unrelated title: %q", g)
+		if strings.Count(normalizeForMatch(g), "tari") < 2 {
+			t.Errorf("kept a title that does not repeat the name: %q", g)
 		}
 	}
 }
 
-// TestApplyTitleFilterDedupesRepeatedTerms pins the behaviour for a query that
-// repeats a word. "TARI TARI" is how people write the title, not a demand for
-// two occurrences, so a single occurrence qualifies; requiring two would drop
-// legitimate releases.
-func TestApplyTitleFilterDedupesRepeatedTerms(t *testing.T) {
-	if got := queryTerms("TARI TARI"); len(got) != 1 {
-		t.Fatalf("repeated term should collapse to one, got %v", got)
+// TestApplyTitleFilterRequiresRepeatedTerm pins the multiplicity rule.
+//
+// "TARI TARI" is the title of the show, not an emphasis on "TARI". Collapsing
+// the repeated word (an earlier implementation did) let single-occurrence
+// releases through, which is exactly the noise the filter exists to remove.
+func TestApplyTitleFilterRequiresRepeatedTerm(t *testing.T) {
+	if got := queryTerms("TARI TARI"); len(got) != 2 {
+		t.Fatalf("repeated term must be kept as written, got %v", got)
 	}
-	in := titles("TARI - 01", "TARI TARI - 02", "other")
+
+	in := titles(
+		"TARI TARI - 01",   // correct: appears twice
+		"TARITARI - 02",    // correct: concatenated, still twice
+		"TARI.TARI.03",     // correct: punctuation is whitespace
+		"TARI - 04",        // wrong: once only
+		"TARITARI",         // correct: concatenated
+		"TA RI TA RI",      // wrong: split across word boundaries
+	)
 	got := gotTitles(applyTitleFilter(in, "TARI TARI"))
-	if len(got) != 2 {
-		t.Errorf("kept %d, want 2: %v", len(got), got)
+
+	want := map[string]bool{
+		"TARI TARI - 01": true,
+		"TARITARI - 02":  true,
+		"TARI.TARI.03":   true,
+		"TARITARI":       true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("kept %d, want %d: %v", len(got), len(want), got)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected title kept: %q", g)
+		}
+	}
+}
+
+// TestApplyTitleFilterTermOrder verifies the terms must appear in the order
+// given, which is how a title reads.
+func TestApplyTitleFilterTermOrder(t *testing.T) {
+	if got := gotTitles(applyTitleFilter(titles("BARI TARI - 01"), "TARI BARI")); len(got) != 0 {
+		t.Errorf("reversed order should not match, got %v", got)
+	}
+	if got := gotTitles(applyTitleFilter(titles("TARI BARI - 01"), "TARI BARI")); len(got) != 1 {
+		t.Errorf("matching order should match, got %v", got)
 	}
 }
 
@@ -104,13 +137,14 @@ func TestApplyTitleFilterCJK(t *testing.T) {
 	}
 }
 
-// TestApplyTitleFilterTermsNotAdjacent pins the deliberate looseness: the terms
-// need not be adjacent, so a release that separates them still matches.
+// TestApplyTitleFilterTermsNotAdjacent pins the deliberate looseness: a title
+// that separates the terms with other words still matches, as long as each
+// occurrence is present and in order.
 func TestApplyTitleFilterTermsNotAdjacent(t *testing.T) {
-	in := titles("[Group] TARI something TARI")
+	in := titles("[Group] TARI the animation TARI")
 	got := applyTitleFilter(in, "TARI TARI")
 	if len(got) != 1 {
-		t.Errorf("non-adjacent terms should match, got %v", gotTitles(got))
+		t.Errorf("non-adjacent but ordered occurrences should match, got %v", gotTitles(got))
 	}
 }
 
@@ -148,10 +182,10 @@ func TestQueryTermsStripsPunctuation(t *testing.T) {
 		query string
 		want  int
 	}{
-		{"TARI TARI", 1},   // repeated term collapses
-		{"TARI BARI", 2},   // distinct terms stay
-		{"  TARI   TARI  ", 1},
-		{`"TARI TARI"`, 1},
+		{"TARI TARI", 2}, // repeated term is kept as written
+		{"TARI BARI", 2},
+		{"  TARI   TARI  ", 2},
+		{`"TARI TARI"`, 2},
 		{"group:NEST", 1},
 		{"a b c", 0}, // all single characters
 		{"", 0},

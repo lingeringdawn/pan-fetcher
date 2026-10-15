@@ -2746,19 +2746,26 @@ func isValidGroup(g string) bool {
 	return false
 }
 
-// applyTitleFilter drops results whose title does not contain every query term.
+// applyTitleFilter drops results whose title does not contain the query.
 //
 // Torznab indexers match loosely: a search for a short or common title (the
 // documented case is "TARI TARI") comes back with a long tail of unrelated
 // releases, because the tracker matched on a fragment, a different season, or
-// simply ranked it for the query. Those entries are noise in a yEnc-style list
-// and, worse, they get pushed to 115 if the result is grabbed.
+// simply ranked it for the query. Those entries are noise in a long list and,
+// worse, they get pushed to 115 if the result is grabbed.
 //
-// Matching is deliberately loose in the other direction: every whitespace-
-// separated term must appear somewhere in the title, case-insensitively, but
-// the terms need not be adjacent and punctuation is ignored. That keeps
-// "TARI TARI" matching "[Group] TARI TARI - 01 (1080p)" while rejecting
-// unrelated titles, and it does not require the query to be an exact substring.
+// Matching rules:
+//
+//   - Every term must appear, case-insensitively, and a repeated term must
+//     appear as many times as it was written. "TARI TARI" is a title, not an
+//     emphasis, so a release named "TARI - 01" is a different show and is
+//     rejected.
+//   - Terms must appear in the order given, which is how a title reads. This is
+//     what keeps "TARI TARI" from matching "TARI something TARI", where the two
+//     occurrences are unrelated parts of the name.
+//   - Punctuation and whitespace are ignored on both sides, so the query
+//     "TARI TARI" matches "TARI.TARI", "TARI_TARI", "TARI[TARI]" and
+//     "TARITARI" as well as the spaced form.
 //
 // The query is the one the user typed; the keyword filter (applyKeywordFilter)
 // is separate and still applies on top, since it expresses tag requirements
@@ -2768,33 +2775,55 @@ func applyTitleFilter(results []indexer.SearchResult, query string) []indexer.Se
 	if len(terms) == 0 {
 		return results
 	}
+	needle := strings.Join(terms, " ")
+
 	out := make([]indexer.SearchResult, 0, len(results))
 	for _, r := range results {
-		title := normalizeForMatch(r.Title)
-		ok := true
-		for _, t := range terms {
-			if !strings.Contains(title, t) {
-				ok = false
-				break
-			}
-		}
-		if ok {
+		if matchQueryTerms(normalizeForMatch(r.Title), needle, terms) {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
+// matchQueryTerms reports whether the normalised title contains every term, in
+// order and with the right multiplicity.
+//
+// A repeated term is handled by matching the whole query as a phrase first:
+// "tari tari" matches "tari tari 01" directly. Only when that fails do the terms
+// get matched individually, which covers a title that separates them with other
+// words ("tari the animation tari") while still requiring each occurrence.
+func matchQueryTerms(title, needle string, terms []string) bool {
+	if strings.Contains(title, needle) {
+		return true
+	}
+	// A single term that was already rejected as a phrase cannot match in any
+	// other way.
+	if len(terms) == 1 {
+		return false
+	}
+	// Walk the terms from the left, consuming the title as each is found. The
+	// position advances past every match, so a repeated term needs a second,
+	// later occurrence rather than reusing the first.
+	rest := title
+	for _, t := range terms {
+		i := strings.Index(rest, t)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(t):]
+	}
+	return true
+}
+
 // queryTerms splits a search query into lower-case terms worth matching on.
 //
 // Single-character terms are dropped: they match almost everything and would
-// make the filter ineffective. Duplicates are collapsed, so a query that repeats
-// a word ("TARI TARI") requires one occurrence rather than two — the repetition
-// is how people emphasise a title, not a demand for it twice.
+// make the filter ineffective. Repeated terms are kept as written — a title that
+// genuinely repeats a word must appear repeated in the release name.
 func queryTerms(query string) []string {
 	fields := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 	out := make([]string, 0, len(fields))
-	seen := make(map[string]bool, len(fields))
 	for _, f := range fields {
 		// Strip punctuation that never appears meaningfully in a title search
 		// but does appear in queries, e.g. a trailing colon from an operator.
@@ -2803,10 +2832,9 @@ func queryTerms(query string) []string {
 			continue
 		}
 		n := normalizeForMatch(f)
-		if n == "" || seen[n] {
+		if n == "" {
 			continue
 		}
-		seen[n] = true
 		out = append(out, n)
 	}
 	return out
