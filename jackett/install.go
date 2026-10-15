@@ -238,15 +238,46 @@ func Install(ctx context.Context, dir string, force bool, logf func(string, ...i
 	}
 	logStep("已下载 %.1f MB", float64(written)/(1024*1024))
 
+	// Extract into a staging directory rather than straight over the live
+	// install. Two reasons:
+	//
+	//   - The archive wraps everything in a top-level "Jackett/" folder. Into a
+	//     clean staging directory that folder is unambiguous, whereas extracting
+	//     into a populated install left the new build nested and the old files
+	//     in place (see flattenExtracted).
+	//   - A failure part-way through leaves the existing install untouched.
+	staging, err := os.MkdirTemp(dir, "jackett-extract-*")
+	if err != nil {
+		return res, fmt.Errorf("创建解压目录失败: %w", err)
+	}
+	defer os.RemoveAll(staging)
+
 	// Every Linux release is a tar.gz.
-	if err := extractTarGz(tmpPath, dir); err != nil {
+	if err := extractTarGz(tmpPath, staging); err != nil {
 		return res, fmt.Errorf("解压 Jackett 失败: %w", err)
 	}
-	logStep("已解压到 %s", dir)
 
-	// The archive nests everything under a top-level "Jackett" directory; lift
-	// the contents up so the launcher sits directly in dir.
-	if err := flattenSingleRoot(dir, exeName); err != nil {
+	// Find the directory the archive rooted itself in. A single subdirectory is
+	// the documented layout; anything else means the archive extracted flat, in
+	// which case the staging directory itself is the root.
+	src := staging
+	if entries, err := os.ReadDir(staging); err == nil {
+		var dirs []string
+		for _, e := range entries {
+			if e.IsDir() {
+				dirs = append(dirs, e.Name())
+			}
+		}
+		if len(dirs) == 1 {
+			if _, err := os.Stat(filepath.Join(staging, dirs[0], exeName)); err == nil {
+				src = filepath.Join(staging, dirs[0])
+			}
+		}
+	}
+	logStep("已解压到 %s", src)
+
+	// Move the staged files into place, replacing the previous version.
+	if err := flattenExtracted(dir, src); err != nil {
 		return res, err
 	}
 
@@ -273,52 +304,87 @@ func platformArch() string {
 	return runtime.GOARCH
 }
 
-// flattenSingleRoot moves the contents of a sole top-level subdirectory up into
-// dir. Jackett's Linux archives extract into a "Jackett" folder, which would
-// otherwise bury the executable one level deeper than expected.
-func flattenSingleRoot(dir, exeName string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	var dirs, files []string
-	for _, e := range entries {
-		name := e.Name()
-		if strings.HasPrefix(name, "jackett-download-") {
-			continue // our own temp file
-		}
-		if e.IsDir() {
-			dirs = append(dirs, name)
-		} else {
-			files = append(files, name)
-		}
-	}
-	// Nothing to do when the executable is already at the top level.
-	for _, f := range files {
-		if strings.EqualFold(f, exeName) {
-			return nil
-		}
-	}
-	if len(dirs) != 1 {
+// flattenExtracted moves the contents of inner into dir, overwriting existing
+// files.
+//
+// Jackett's Linux archives contain a single top-level "Jackett/" directory, so
+// extraction buries everything one level deeper than the layout we manage.
+//
+// This used to be inferred by "dir holds exactly one subdirectory", which only
+// holds for a first install. On an upgrade the directory already contains the
+// previous version, so the count is never one, the move was skipped, and the
+// new build was left in dir/Jackett while the old files stayed in place — the
+// update reported success but nothing changed. The extraction directory is now
+// named explicitly by the caller.
+//
+// Existing files are overwritten on purpose: that is what an upgrade means.
+func flattenExtracted(dir, inner string) error {
+	// Nothing to move when the archive already extracted flat into dir.
+	if filepath.Clean(inner) == filepath.Clean(dir) {
 		return nil
 	}
 
-	inner := filepath.Join(dir, dirs[0])
-	innerEntries, err := os.ReadDir(inner)
+	entries, err := os.ReadDir(inner)
 	if err != nil {
 		return err
 	}
-	for _, e := range innerEntries {
+	if len(entries) == 0 {
+		return fmt.Errorf("安装包内容为空: %s", inner)
+	}
+
+	moved := 0
+	for _, e := range entries {
 		src := filepath.Join(inner, e.Name())
 		dst := filepath.Join(dir, e.Name())
-		if _, err := os.Stat(dst); err == nil {
-			continue // never clobber an existing file
+
+		// A directory that already exists must be merged rather than replaced:
+		// os.Rename fails on a non-empty target directory, and the old tree
+		// holds the user's indexer definitions.
+		if e.IsDir() {
+			if err := mergeDir(src, dst); err != nil {
+				return fmt.Errorf("合并目录 %s 失败: %w", e.Name(), err)
+			}
+			moved++
+			continue
 		}
+		// Overwrite: an upgrade must replace the old binaries.
+		_ = os.Remove(dst)
 		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("整理安装目录失败: %w", err)
 		}
+		moved++
+	}
+	if moved == 0 {
+		return fmt.Errorf("安装包内容为空: %s", inner)
 	}
 	_ = os.Remove(inner)
+	return nil
+}
+
+// mergeDir copies the contents of src into dst, creating dst when needed and
+// overwriting files that collide.
+func mergeDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := mergeDir(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		_ = os.Remove(d)
+		if err := os.Rename(s, d); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -697,24 +763,106 @@ func candidateStartURLs(requested string) []string {
 	return out
 }
 
-// Stop terminates a Jackett process started from dir, when its PID is known.
+// Stop terminates a Jackett process started from dir.
+//
+// The PID file is preferred, but it is not always present: an instance started
+// by hand, or by an older build, leaves no record, and refusing to stop in that
+// case blocked updates while the process kept running. It therefore falls back
+// to finding the process by its executable path, which is unambiguous because
+// each managed install lives in its own directory.
 func Stop(dir string) error {
 	pidPath := filepath.Join(dir, "jackett.pid")
-	data, err := os.ReadFile(pidPath)
+
+	if data, err := os.ReadFile(pidPath); err == nil {
+		var pid int
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil && pid > 0 {
+			if err := killAndWait(pid); err != nil {
+				return err
+			}
+			_ = os.Remove(pidPath)
+			return nil
+		}
+	}
+
+	// No usable PID file: locate the process by its executable path.
+	pids, err := pidsForPath(filepath.Join(dir, executableName()))
 	if err != nil {
-		return fmt.Errorf("未找到 Jackett PID 记录")
+		return fmt.Errorf("未找到 Jackett PID 记录，且无法按路径查找进程: %w", err)
 	}
-	var pid int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil || pid <= 0 {
-		return fmt.Errorf("PID 记录无效")
+	if len(pids) == 0 {
+		// Nothing is running, which is the state the caller wanted.
+		_ = os.Remove(pidPath)
+		return nil
 	}
+	for _, pid := range pids {
+		if err := killAndWait(pid); err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(pidPath)
+	return nil
+}
+
+// killAndWait sends SIGTERM and waits for the process to exit, escalating to
+// SIGKILL after a grace period.
+//
+// Jackett flushes its indexer configuration on shutdown, so it is given a
+// chance to exit cleanly before being forced.
+func killAndWait(pid int) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
-	if err := proc.Kill(); err != nil {
-		return err
+	if !processAlive(pid) {
+		return nil
 	}
-	_ = os.Remove(pidPath)
-	return nil
+	_ = proc.Signal(syscall.SIGTERM)
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if err := proc.Kill(); err != nil {
+		return fmt.Errorf("终止进程 %d 失败: %w", pid, err)
+	}
+	// Confirm it actually went away, so the caller can trust the filesystem is
+	// no longer in use.
+	for i := 0; i < 20; i++ {
+		if !processAlive(pid) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("进程 %d 未能终止", pid)
+}
+
+// pidsForPath returns the PIDs whose executable is exePath.
+//
+// It reads /proc directly rather than shelling out to pgrep, which is not
+// guaranteed to be installed.
+func pidsForPath(exePath string) ([]int, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		target, err := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
+		if err != nil {
+			continue // not ours, or gone
+		}
+		// A deleted executable reads as "/path/to/exe (deleted)".
+		target = strings.TrimSuffix(target, " (deleted)")
+		if target == exePath {
+			out = append(out, pid)
+		}
+	}
+	return out, nil
 }

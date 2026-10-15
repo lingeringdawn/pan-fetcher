@@ -159,6 +159,80 @@ func Update(ctx context.Context, dir string, logf func(string, ...interface{})) 
 	return Install(ctx, dir, true, logf)
 }
 
+// Uninstall stops the managed Jackett and removes its files, returning a trail
+// of what was done.
+//
+// The data directory (the API key and the user's indexer configuration) is kept
+// unless purge is set: it is the expensive part to recreate, and deleting it by
+// default would be a silent data loss. Jackett's own configuration is only
+// removed on purge, and only from locations this project manages.
+func Uninstall(dir string, purge bool) (log []string, err error) {
+	step := func(format string, args ...interface{}) {
+		log = append(log, fmt.Sprintf(format, args...))
+	}
+
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return log, fmt.Errorf("未找到 Jackett 安装目录: %s", dir)
+	}
+
+	// Stop first: deleting files under a running process leaves it serving from
+	// a half-removed tree, and it would recreate some of them on exit.
+	if err := Stop(dir); err != nil {
+		return log, fmt.Errorf("停止 Jackett 失败: %w", err)
+	}
+	step("已停止 Jackett 进程")
+
+	if err := os.RemoveAll(dir); err != nil {
+		return log, fmt.Errorf("删除安装目录失败: %w", err)
+	}
+	step("已删除安装目录 %s", dir)
+
+	if purge {
+		for _, d := range jackettDataDirs() {
+			if _, err := os.Stat(d); err != nil {
+				continue
+			}
+			if err := os.RemoveAll(d); err != nil {
+				return log, fmt.Errorf("删除数据目录 %s 失败: %w", d, err)
+			}
+			step("已删除数据目录 %s", d)
+		}
+	} else {
+		step("已保留数据目录（索引器配置与 API Key）")
+	}
+
+	return log, nil
+}
+
+// jackettDataDirs lists the locations Jackett may keep its configuration in.
+//
+// It follows the same resolution order as configCandidates so an uninstall
+// removes exactly what a managed install could have created.
+func jackettDataDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		c := filepath.Clean(p)
+		if seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		add(filepath.Join(xdg, "Jackett"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".config", "Jackett"))
+	}
+	add("/config/Jackett")
+	return out
+}
+
 // fetchReleaseByTag returns the download URL of a specific release's asset.
 func fetchReleaseByTag(ctx context.Context, client *http.Client, tag string) (string, error) {
 	u := "https://api.github.com/repos/Jackett/Jackett/releases/tags/" + tag

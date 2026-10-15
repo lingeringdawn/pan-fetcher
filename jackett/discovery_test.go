@@ -200,7 +200,9 @@ func TestSafeJoinRejectsTraversal(t *testing.T) {
 
 // TestFlattenSingleRoot covers Jackett's Linux archives, which nest everything
 // under a top-level "Jackett" directory.
-func TestFlattenSingleRoot(t *testing.T) {
+// TestFlattenExtractedLiftsNestedArchive verifies the layout the Linux archive
+// produces is lifted so the launcher sits directly in dir.
+func TestFlattenExtractedLiftsNestedArchive(t *testing.T) {
 	base := t.TempDir()
 	inner := filepath.Join(base, "Jackett")
 	if err := os.MkdirAll(filepath.Join(inner, "Content"), 0o755); err != nil {
@@ -214,8 +216,8 @@ func TestFlattenSingleRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := flattenSingleRoot(base, exe); err != nil {
-		t.Fatalf("flattenSingleRoot: %v", err)
+	if err := flattenExtracted(base, inner); err != nil {
+		t.Fatalf("flattenExtracted: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(base, exe)); err != nil {
@@ -226,15 +228,103 @@ func TestFlattenSingleRoot(t *testing.T) {
 	}
 }
 
-// TestFlattenSingleRootNoopWhenExeAtTop verifies an already-flat archive is left
+// TestFlattenExtractedUpgradesOverExisting is the regression test for the
+// update that reported success without changing anything.
+//
+// The move used to be driven by "dir holds exactly one subdirectory", which is
+// only true for a first install. On an upgrade the directory already holds the
+// previous version, so the count was never one, the move was skipped, and the
+// new build stayed nested in dir/Jackett while the old files kept serving. The
+// extraction directory is now passed in explicitly.
+func TestFlattenExtractedUpgradesOverExisting(t *testing.T) {
+	base := t.TempDir()
+	exe := executableName()
+
+	// The live install: an older launcher that must be replaced.
+	if err := os.WriteFile(filepath.Join(base, exe), []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "old-only.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The staged new version, nested as the archive provides it.
+	inner := filepath.Join(base, "staging", "Jackett")
+	if err := os.MkdirAll(filepath.Join(inner, "Content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, exe), []byte("new-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "Content", "new.dat"), []byte("n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := flattenExtracted(base, inner); err != nil {
+		t.Fatalf("flattenExtracted: %v", err)
+	}
+
+	// The launcher must be the new one: this is the whole point of an upgrade.
+	got, err := os.ReadFile(filepath.Join(base, exe))
+	if err != nil {
+		t.Fatalf("read launcher: %v", err)
+	}
+	if string(got) != "new-binary" {
+		t.Errorf("launcher was not replaced: got %q, want new-binary", got)
+	}
+	if _, err := os.Stat(filepath.Join(base, "Content", "new.dat")); err != nil {
+		t.Errorf("new content not merged in: %v", err)
+	}
+	// A file that exists only in the old install must survive.
+	if _, err := os.Stat(filepath.Join(base, "old-only.txt")); err != nil {
+		t.Errorf("unrelated existing file was removed: %v", err)
+	}
+}
+
+// TestFlattenExtractedMergesDirectories covers the collision case: both the old
+// and new install have a Content directory, and os.Rename would fail on a
+// non-empty target.
+func TestFlattenExtractedMergesDirectories(t *testing.T) {
+	base := t.TempDir()
+	exe := executableName()
+
+	if err := os.MkdirAll(filepath.Join(base, "Content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "Content", "old.dat"), []byte("o"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inner := filepath.Join(base, "staging", "Jackett")
+	if err := os.MkdirAll(filepath.Join(inner, "Content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, exe), []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "Content", "new.dat"), []byte("n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := flattenExtracted(base, inner); err != nil {
+		t.Fatalf("flattenExtracted: %v", err)
+	}
+
+	for _, f := range []string{"old.dat", "new.dat"} {
+		if _, err := os.Stat(filepath.Join(base, "Content", f)); err != nil {
+			t.Errorf("Content/%s missing after merge: %v", f, err)
+		}
+	}
+}
+
+// TestFlattenExtractedNoopWhenExeAtTop verifies an already-flat archive is left
 // alone rather than being reorganised.
-func TestFlattenSingleRootNoopWhenExeAtTop(t *testing.T) {
+func TestFlattenExtractedNoopWhenExeAtTop(t *testing.T) {
 	base := t.TempDir()
 	exe := executableName()
 	if err := os.WriteFile(filepath.Join(base, exe), []byte("bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A stray sibling directory must not trigger a move.
 	if err := os.MkdirAll(filepath.Join(base, "Content"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -242,11 +332,22 @@ func TestFlattenSingleRootNoopWhenExeAtTop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := flattenSingleRoot(base, exe); err != nil {
-		t.Fatalf("flattenSingleRoot: %v", err)
+	if err := flattenExtracted(base, base); err != nil {
+		t.Fatalf("flattenExtracted: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "Content", "y.dat")); err != nil {
 		t.Errorf("existing layout was disturbed: %v", err)
+	}
+}
+
+// TestStopWithoutPidFile covers an instance started by hand, which writes no PID
+// file. Stop used to fail outright, and the caller then skipped the update.
+func TestStopWithoutPidFile(t *testing.T) {
+	dir := t.TempDir()
+	// Nothing is running from this directory, so Stop should report success:
+	// the desired state (not running) already holds.
+	if err := Stop(dir); err != nil {
+		t.Errorf("Stop should succeed when nothing is running: %v", err)
 	}
 }
 

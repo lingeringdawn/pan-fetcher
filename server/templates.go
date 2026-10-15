@@ -1571,23 +1571,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     <!-- indexer management -->
     {{if eq .Page "indexers"}}
 
-    <!-- Jackett connection status -->
+    <!-- Jackett connection status. Environment checks, install, update and
+         uninstall live on the settings page: they are configuration, not
+         everyday indexer management. -->
     <div class="card panel" id="jk-setup-panel">
       <h2>🦜 {{index .T "jk_setup_title"}}</h2>
       <div id="jk-setup-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
-    </div>
-
-    <!-- host environment: what Jackett needs from this machine -->
-    <div class="card panel" id="jk-env-panel" style="margin-top:16px;">
-      <h2>{{index .T "jk_env_title"}}</h2>
-      <div class="hint" style="margin-bottom:8px;">{{index .T "jk_env_hint"}}</div>
-      <div id="jk-env-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
-    </div>
-
-    <!-- installed version and update -->
-    <div class="card panel" id="jk-update-panel" style="margin-top:16px;">
-      <h2>{{index .T "jk_update_title"}}</h2>
-      <div id="jk-update-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
     </div>
 
     <!-- active indexers -->
@@ -1666,150 +1655,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         if(el) el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+text+'</span>';
       }
 
-      // ---- environment check -------------------------------------------------
-      // Rendered as a block of its own so a missing system dependency is
-      // visible before the user commits to a 50 MB download.
-
-      function jkEnvLine(label,value,ok){
-        var color = ok===undefined ? 'var(--muted)' : (ok?'var(--accent-2)':'var(--danger)');
-        return '<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;">'
-          + '<span style="color:var(--muted);min-width:96px;">'+label+'</span>'
-          + '<span style="color:'+color+';word-break:break-all;">'+value+'</span></div>';
-      }
-
-      function renderJKEnv(env,usable){
-        var el=document.getElementById('jk-env-body');
-        if(!el) return;
-        var h='';
-        h+=jkEnvLine('系统', (env.distro_name||env.os||'?')+' / '+env.arch);
-        h+=jkEnvLine('包管理器', env.package_manager||'未识别', !!env.package_manager);
-        h+=jkEnvLine('ICU 库', env.has_icu?'已安装':'缺失', env.has_icu);
-        if(env.glibc_version) h+=jkEnvLine('glibc', env.glibc_version);
-        if(env.musl) h+=jkEnvLine('libc', 'musl（将使用 musl 构建）');
-        if(env.install_dir){
-          h+=jkEnvLine('安装目录', env.install_dir+(env.install_dir_writable?'':'（不可写）'), env.install_dir_writable);
-        }
-        if(env.disk_free_bytes){
-          var freeMB=Math.round(env.disk_free_bytes/1048576);
-          var needMB=Math.round(env.disk_required_bytes/1048576);
-          h+=jkEnvLine('磁盘可用', freeMB+' MB / 需 '+needMB+' MB', env.disk_free_bytes>=env.disk_required_bytes);
-        }
-        h+=jkEnvLine('权限', env.is_root?'root':'非 root'+(env.can_install?'':'（无法自动装依赖）'), env.is_root);
-
-        if(env.problems&&env.problems.length){
-          h+='<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;font-size:12px;color:var(--danger);">';
-          env.problems.forEach(function(p){ h+='<div>✗ '+p+'</div>'; });
-          h+='</div>';
-        }
-        if(env.warnings&&env.warnings.length){
-          h+='<div style="margin-top:8px;font-size:12px;color:var(--warn);">';
-          env.warnings.forEach(function(w){ h+='<div>⚠ '+w+'</div>'; });
-          h+='</div>';
-        }
-
-        var btns='';
-        if(!usable){
-          if(env.can_install){
-            btns+='<button type="button" id="jk-deps-btn" onclick="jkInstallDeps()" style="margin:8px 0 0;padding:6px 14px;font-size:12px;background:var(--accent);">{{index .T "jk_env_install_deps"}}</button>';
-          }else{
-            btns+='<div class="hint" style="margin-top:8px;">{{index .T "jk_env_manual_hint"}}</div>';
-          }
-        }
-        h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'+btns+'</div>';
-        h+='<div id="jk-env-result" style="margin-top:8px;font-size:12px;"></div>';
-        el.innerHTML=h;
-      }
-
-      async function jkCheckEnv(){
-        var el=document.getElementById('jk-env-body');
-        if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
-        try{
-          var r=await fetch('/indexers/jackett/env');
-          var j=await r.json();
-          if(!j.ok){ if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>'; return; }
-          renderJKEnv(j.env,j.usable);
-          // Block the install button when the host cannot run Jackett, so the
-          // download is not attempted at all.
-          var b=document.getElementById('jk-install-btn');
-          if(b){
-            b.disabled=!j.usable;
-            b.title=j.usable?'':'系统环境不满足，请先处理上面的问题';
-            b.style.opacity=j.usable?'1':'0.5';
-          }
-        }catch(e){
-          if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
-        }
-      }
-
-      async function jkInstallDeps(){
-        var btn=document.getElementById('jk-deps-btn');
-        var out=document.getElementById('jk-env-result');
-        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_env_installing"}}';}
-        if(out) out.innerHTML='<span class="hint">{{index .T "jk_env_installing"}}</span>';
-        try{
-          var r=await fetch('/indexers/jackett/install-deps',{method:'POST'});
-          var j=await r.json();
-          if(out){
-            var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-            out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
-          }
-          if(j.env) renderJKEnv(j.env,j.usable);
-        }catch(e){
-          if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
-        }
-      }
-
-      // ---- version / update --------------------------------------------------
-
-      async function jkCheckUpdate(){
-        var el=document.getElementById('jk-update-body');
-        if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
-        try{
-          var r=await fetch('/indexers/jackett/check-update');
-          var j=await r.json();
-          var st=j.st||{};
-          if(!el) return;
-          if(st.error){
-            el.innerHTML='<span class="hint" style="color:var(--warn);">⚠ '+(st.error)+'</span>';
-            return;
-          }
-          var h=jkEnvLine('已安装', st.installed||'未知', !!st.installed);
-          h+=jkEnvLine('最新版本', st.latest||'未知', true);
-          if(st.has_update){
-            h+='<div style="margin-top:8px;"><button type="button" id="jk-update-btn" onclick="jkDoUpdate()" style="margin:0;padding:6px 14px;font-size:12px;background:var(--accent);">{{index .T "jk_update_btn"}}</button></div>';
-          }else{
-            h+='<div class="hint" style="margin-top:6px;">{{index .T "jk_up_to_date"}}</div>';
-          }
-          h+='<div id="jk-update-result" style="margin-top:8px;font-size:12px;"></div>';
-          el.innerHTML=h;
-        }catch(e){
-          if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
-        }
-      }
-
-      async function jkDoUpdate(){
-        if(!(await confirmAsync('{{index .T "jk_update_confirm"}}'))) return;
-        var btn=document.getElementById('jk-update-btn');
-        var out=document.getElementById('jk-update-result');
-        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_updating"}}';}
-        if(out) out.innerHTML='<span class="hint">{{index .T "jk_updating"}}</span>';
-        try{
-          var r=await fetch('/indexers/jackett/update',{method:'POST'});
-          var j=await r.json();
-          if(out){
-            var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-            out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
-          }
-          // A stopped instance stays stopped: restarting is the user's call,
-          // because an update that swaps the tree may need a manual check first.
-          if(j.ok&&j.was_running&&out){
-            out.innerHTML+='<div style="margin-top:8px;"><button type="button" onclick="jkStart()" style="margin:0;padding:6px 14px;font-size:12px;background:var(--accent-2);">{{index .T "jk_start_btn"}}</button></div>';
-          }
-        }catch(e){
-          if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
-        }
-      }
-
       async function jkDiscover(){
         jkSetupMsg('{{index .T "jk_detecting"}}',false);
         try{
@@ -1834,28 +1679,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           jkSetupState.configured=!!(j.url&&j.apikey);
           setTimeout(function(){location.reload();},900);
         }catch(e){jkSetupMsg(e.message,true);}
-      }
-
-      async function jkInstall(){
-        if(!(await confirmAsync('{{index .T "jk_install_confirm"}}'))) return;
-        var btn=document.getElementById('jk-install-btn');
-        if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_installing"}}';}
-        jkSetupMsg('{{index .T "jk_installing_hint"}}',false);
-        try{
-          var r=await fetch('/indexers/jackett/install',{method:'POST',body:new URLSearchParams({start:'1'})});
-          var j=await r.json();
-          if(j.ok){
-            jkSetupMsg('{{index .T "jk_install_ok"}}: '+(j.url||''),false);
-            jkSetupState.configured=true;
-            setTimeout(function(){location.reload();},1500);
-          } else {
-            jkSetupMsg(j.msg||'failed',true);
-            if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
-          }
-        }catch(e){
-          jkSetupMsg(e.message,true);
-          if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
-        }
       }
 
       // Load Jackett indexers async
@@ -2083,9 +1906,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }
       renderJKSetup(null);
       loadJackettLib();
-      // Environment first: it decides whether the install button is usable.
-      jkCheckEnv();
-      jkCheckUpdate();
     </script>
     {{end}}
 
@@ -2171,6 +1991,209 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             else{sp.textContent='✗ '+j.msg;sp.style.color='var(--danger)';}
           }catch(e){sp.textContent='✗ {{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
+        }
+
+        // ---- Jackett mode --------------------------------------------------
+        // The radio only decides which controls are shown; the value is stored
+        // when the form is submitted, like every other setting.
+        function jkModeChanged(){
+          var managed=document.querySelector('input[name="jackett_mode"][value="managed"]');
+          var on=managed&&managed.checked;
+          var mp=document.getElementById('jk-managed-panel');
+          var ep=document.getElementById('jk-external-panel');
+          if(mp) mp.style.display=on?'':'none';
+          if(ep) ep.style.display=on?'none':'';
+          if(on){ jkCheckEnv(); jkCheckUpdate(); }
+        }
+
+        // ---- environment ---------------------------------------------------
+        function jkEnvLine(label,value,ok){
+          var color = ok===undefined ? 'var(--muted)' : (ok?'var(--accent-2)':'var(--danger)');
+          return '<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;">'
+            + '<span style="color:var(--muted);min-width:96px;">'+label+'</span>'
+            + '<span style="color:'+color+';word-break:break-all;">'+value+'</span></div>';
+        }
+
+        function renderJKEnv(env,usable){
+          var el=document.getElementById('jk-env-body');
+          if(!el) return;
+          var h='';
+          h+=jkEnvLine('{{index .T "jk_env_os"}}', (env.distro_name||env.os||'?')+' / '+env.arch);
+          h+=jkEnvLine('{{index .T "jk_env_pm"}}', env.package_manager||'{{index .T "jk_env_pm_none"}}', !!env.package_manager);
+          h+=jkEnvLine('ICU', env.has_icu?'{{index .T "jk_env_ok"}}':'{{index .T "jk_env_missing"}}', env.has_icu);
+          if(env.glibc_version) h+=jkEnvLine('glibc', env.glibc_version);
+          if(env.musl) h+=jkEnvLine('libc', 'musl');
+          if(env.install_dir){
+            h+=jkEnvLine('{{index .T "jk_env_dir"}}', env.install_dir, env.install_dir_writable);
+          }
+          if(env.disk_free_bytes){
+            var freeMB=Math.round(env.disk_free_bytes/1048576);
+            var needMB=Math.round(env.disk_required_bytes/1048576);
+            h+=jkEnvLine('{{index .T "jk_env_disk"}}', freeMB+' MB / '+needMB+' MB', env.disk_free_bytes>=env.disk_required_bytes);
+          }
+          h+=jkEnvLine('{{index .T "jk_env_priv"}}', env.is_root?'root':'{{index .T "jk_env_nonroot"}}', env.is_root);
+
+          if(env.problems&&env.problems.length){
+            h+='<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;font-size:12px;color:var(--danger);">';
+            env.problems.forEach(function(p){ h+='<div>✗ '+p+'</div>'; });
+            h+='</div>';
+          }
+          if(env.warnings&&env.warnings.length){
+            h+='<div style="margin-top:8px;font-size:12px;color:var(--warn);">';
+            env.warnings.forEach(function(w){ h+='<div>⚠ '+w+'</div>'; });
+            h+='</div>';
+          }
+          if(!usable&&env.can_install){
+            h+='<button type="button" id="jk-deps-btn" onclick="jkInstallDeps()" style="margin:8px 0 0;padding:5px 12px;font-size:12px;background:var(--accent);">{{index .T "jk_env_install_deps"}}</button>';
+          }else if(!usable){
+            h+='<div class="hint" style="margin-top:8px;">{{index .T "jk_env_manual_hint"}}</div>';
+          }
+          h+='<div id="jk-env-result" style="margin-top:8px;font-size:12px;"></div>';
+          el.innerHTML=h;
+
+          // Block install when the host cannot run Jackett, so a 50 MB download
+          // is not attempted for a binary that would exit at once.
+          var b=document.getElementById('jk-install-btn');
+          if(b){
+            b.disabled=!usable;
+            b.title=usable?'':'{{index .T "jk_env_blocked"}}';
+            b.style.opacity=usable?'1':'0.5';
+          }
+        }
+
+        async function jkCheckEnv(){
+          var el=document.getElementById('jk-env-body');
+          if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/env');
+            var j=await r.json();
+            if(!j.ok){ if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>'; return; }
+            renderJKEnv(j.env,j.usable);
+          }catch(e){
+            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
+        }
+
+        async function jkInstallDeps(){
+          var btn=document.getElementById('jk-deps-btn');
+          var out=document.getElementById('jk-env-result');
+          if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_env_installing"}}';}
+          if(out) out.innerHTML='<span class="hint">{{index .T "jk_env_installing"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/install-deps',{method:'POST'});
+            var j=await r.json();
+            if(out){
+              var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+            }
+            if(j.env) renderJKEnv(j.env,j.usable);
+          }catch(e){
+            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
+        }
+
+        // ---- install / uninstall -------------------------------------------
+        async function jkInstall(){
+          if(!(await confirmAsync('{{index .T "jk_install_confirm"}}'))) return;
+          var btn=document.getElementById('jk-install-btn');
+          var out=document.getElementById('jk-env-result');
+          if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_installing"}}';}
+          if(out) out.innerHTML='<span class="hint">{{index .T "jk_installing_hint"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/install',{method:'POST',body:new URLSearchParams({start:'1'})});
+            var j=await r.json();
+            if(out){
+              var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+            }
+            if(j.ok) setTimeout(function(){location.reload();},1500);
+            else if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
+          }catch(e){
+            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
+          }
+        }
+
+        async function jkUninstall(){
+          if(!(await confirmAsync('{{index .T "jk_uninstall_confirm"}}'))) return;
+          var btn=document.getElementById('jk-uninstall-btn');
+          var out=document.getElementById('jk-env-result');
+          if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_uninstalling"}}';}
+          if(out) out.innerHTML='<span class="hint">{{index .T "jk_uninstalling"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/uninstall',{method:'POST'});
+            var j=await r.json();
+            if(out){
+              var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+            }
+            if(j.ok) setTimeout(function(){location.reload();},1500);
+            else if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_uninstall_btn"}}';}
+          }catch(e){
+            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_uninstall_btn"}}';}
+          }
+        }
+
+        // ---- version / update ----------------------------------------------
+        async function jkCheckUpdate(){
+          var el=document.getElementById('jk-update-body');
+          if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/check-update');
+            var j=await r.json();
+            var st=j.st||{};
+            if(!el) return;
+            if(st.error){
+              el.innerHTML='<span class="hint" style="color:var(--warn);">⚠ '+st.error+'</span>';
+              return;
+            }
+            var h=jkEnvLine('{{index .T "jk_installed_ver"}}', st.installed||'{{index .T "jk_ver_unknown"}}', !!st.installed);
+            h+=jkEnvLine('{{index .T "jk_latest_ver"}}', st.latest||'?', true);
+            if(st.has_update){
+              h+='<div style="margin-top:8px;"><button type="button" id="jk-update-btn" onclick="jkDoUpdate()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent);">{{index .T "jk_update_btn"}}</button></div>';
+            }else{
+              h+='<div class="hint" style="margin-top:6px;">{{index .T "jk_up_to_date"}}</div>';
+            }
+            h+='<div id="jk-update-result" style="margin-top:8px;font-size:12px;"></div>';
+            el.innerHTML=h;
+          }catch(e){
+            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
+        }
+
+        async function jkDoUpdate(){
+          if(!(await confirmAsync('{{index .T "jk_update_confirm"}}'))) return;
+          var btn=document.getElementById('jk-update-btn');
+          var out=document.getElementById('jk-update-result');
+          if(btn){btn.disabled=true;btn.textContent='{{index .T "jk_updating"}}';}
+          if(out) out.innerHTML='<span class="hint">{{index .T "jk_updating"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/update',{method:'POST'});
+            var j=await r.json();
+            if(out){
+              var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+            }
+            // A stopped instance stays stopped: the user decides when to start it.
+            if(j.ok&&j.was_running&&out){
+              out.innerHTML+='<div style="margin-top:8px;"><button type="button" onclick="jkStart()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_start_btn"}}</button></div>';
+            }
+          }catch(e){
+            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
+        }
+
+        async function jkStart(){
+          var out=document.getElementById('jk-update-result');
+          if(out) out.innerHTML='<span class="hint">{{index .T "loading"}}</span>';
+          try{
+            var r=await fetch('/indexers/jackett/start',{method:'POST'});
+            var j=await r.json();
+            if(out) out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>';
+          }catch(e){
+            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
         }
         async function checkUpdate(){
           var btn=document.getElementById('check-update-btn');
@@ -2298,7 +2321,29 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: Jackett -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🦜 Jackett / Prowlarr</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🦜 Jackett</legend>
+
+          <!-- Mode switch: managed install vs. an instance you run yourself -->
+          <div style="margin-bottom:12px;">
+            <label style="margin-bottom:6px;">{{index .T "jk_mode_label"}}</label>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+                <input type="radio" name="jackett_mode" value="managed" style="width:auto;margin:0;"
+                  {{if eq .JackettMode "managed"}}checked{{end}} onchange="jkModeChanged()">
+                {{index .T "jk_mode_managed"}}
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+                <input type="radio" name="jackett_mode" value="external" style="width:auto;margin:0;"
+                  {{if ne .JackettMode "managed"}}checked{{end}} onchange="jkModeChanged()">
+                {{index .T "jk_mode_external"}}
+              </label>
+            </div>
+            <div class="hint" style="margin-top:4px;">
+              {{if eq .JackettMode "managed"}}{{index .T "jk_mode_managed_hint"}}{{else}}{{index .T "jk_mode_external_hint"}}{{end}}
+            </div>
+          </div>
+
+          <!-- Connection details: used by both modes, auto-filled for managed -->
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:2;min-width:200px;">
               <label>Jackett URL</label>
@@ -2316,6 +2361,28 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               <label>Admin 密码 <small style="color:var(--muted);">(WebUI 登录密码)</small></label>
               <input name="jackett_admin_password" type="password" placeholder="与 API Key 相同则留空" value="{{.JackettAdminPassword}}">
             </div>
+          </div>
+
+          <!-- Managed-install controls -->
+          <div id="jk-managed-panel" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);{{if ne .JackettMode "managed"}}display:none;{{end}}">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+              <button type="button" onclick="jkCheckEnv()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">{{index .T "jk_env_refresh"}}</button>
+              <button type="button" onclick="jkCheckUpdate()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">{{index .T "jk_update_check_btn"}}</button>
+              <button type="button" id="jk-install-btn" onclick="jkInstall()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent);">{{index .T "jk_install_btn"}}</button>
+              <button type="button" id="jk-uninstall-btn" onclick="jkUninstall()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--danger);">{{index .T "jk_uninstall_btn"}}</button>
+            </div>
+
+            <h3 style="font-size:13px;margin:12px 0 6px;">{{index .T "jk_env_title"}}</h3>
+            <div class="hint" style="margin-bottom:6px;">{{index .T "jk_env_hint"}}</div>
+            <div id="jk-env-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+
+            <h3 style="font-size:13px;margin:16px 0 6px;">{{index .T "jk_update_title"}}</h3>
+            <div id="jk-update-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+          </div>
+
+          <!-- External mode note -->
+          <div id="jk-external-panel" class="hint" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);{{if eq .JackettMode "managed"}}display:none;{{end}}">
+            {{index .T "jk_external_note"}}
           </div>
         </fieldset>
 
@@ -2337,6 +2404,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <div class="hint">{{index .T "db_path"}}: {{.Settings.DatabasePath}}</div>
       </form>
     </div>
+    <script>
+      // Populate the managed-Jackett panels on load. Both are cheap (a local
+      // check and one GitHub request) and only rendered in managed mode.
+      (function(){
+        var managed=document.querySelector('input[name="jackett_mode"][value="managed"]');
+        if(managed&&managed.checked){ jkCheckEnv(); jkCheckUpdate(); }
+      })();
+    </script>
     {{end}}
 
   </div><!-- /.main -->

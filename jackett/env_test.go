@@ -285,3 +285,107 @@ func TestAssetNameForPlatformMusl(t *testing.T) {
 		t.Error("musl and glibc must select different assets")
 	}
 }
+
+// TestUninstallKeepsDataByDefault is the important safety property: uninstalling
+// the program must not silently destroy the user's indexer configuration.
+func TestUninstallKeepsDataByDefault(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, executableName())
+	if err := os.WriteFile(exe, []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeInstalledVersion(dir, "v0.24.2850"); err != nil {
+		t.Fatal(err)
+	}
+
+	log, err := Uninstall(dir, false)
+	if err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("install directory should be gone")
+	}
+	if len(log) == 0 {
+		t.Error("Uninstall should report what it did")
+	}
+	// The data directory is outside dir, so it is untouched either way; assert
+	// the log says so, which is what the UI shows the user.
+	joined := strings.Join(log, "\n")
+	if !strings.Contains(joined, "保留") {
+		t.Errorf("log should state the data was kept, got:\n%s", joined)
+	}
+}
+
+// TestUninstallMissingDirectory verifies a clear error rather than a silent
+// success when there is nothing to remove.
+func TestUninstallMissingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nope")
+	if _, err := Uninstall(dir, false); err == nil {
+		t.Fatal("expected an error for a missing install directory")
+	} else if !strings.Contains(err.Error(), "未找到") {
+		t.Errorf("error should explain the missing directory, got %q", err)
+	}
+}
+
+// TestUninstallPurgeReportsDataRemoval checks the log distinguishes the two
+// modes, since the UI relies on it to tell the user what happened.
+func TestUninstallPurgeReportsDataRemoval(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, executableName()), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point the data directories at a throwaway location so the test never
+	// touches the real ~/.config/Jackett.
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dataDir := filepath.Join(fakeHome, ".config", "Jackett")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ServerConfig.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	log, err := Uninstall(dir, true)
+	if err != nil {
+		t.Fatalf("Uninstall(purge): %v", err)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Error("purge should remove the data directory")
+	}
+	if !strings.Contains(strings.Join(log, "\n"), "已删除数据目录") {
+		t.Errorf("log should record the data removal, got:\n%s", strings.Join(log, "\n"))
+	}
+}
+
+// TestJackettDataDirsRespectsXDG verifies the uninstall targets the same
+// locations the discovery reads, so a purge cannot miss the real config.
+func TestJackettDataDirsRespectsXDG(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	dirs := jackettDataDirs()
+	if len(dirs) == 0 {
+		t.Fatal("no data directories resolved")
+	}
+	var hasXDG bool
+	for _, d := range dirs {
+		if strings.HasPrefix(d, filepath.Join(home, "xdg")) {
+			hasXDG = true
+		}
+	}
+	if !hasXDG {
+		t.Errorf("XDG_CONFIG_HOME location missing from %v", dirs)
+	}
+	// Duplicates would make the log confusing.
+	seen := map[string]bool{}
+	for _, d := range dirs {
+		if seen[d] {
+			t.Errorf("duplicate data directory %q", d)
+		}
+		seen[d] = true
+	}
+}

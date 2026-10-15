@@ -187,6 +187,8 @@ type dashboardData struct {
 	JackettURL           string
 	JackettAPIKey        string
 	JackettAdminPassword string
+	// JackettMode is "managed" or "external"; empty is treated as managed.
+	JackettMode          string
 	TMDBAPIKey           string
 	AboutVersion         string
 	AutoUpdate      bool
@@ -678,10 +680,23 @@ type webSettings struct {
 	JackettURL           string `json:"jackett_url"`
 	JackettAPIKey        string `json:"jackett_apikey"`
 	JackettAdminPassword string `json:"jackett_admin_password"`
+	// JackettMode selects how Jackett is provided: "managed" means pan-fetcher
+	// installs and runs it, "external" means the user runs their own instance.
+	// It only changes which controls the settings page offers; the connection
+	// details above are used either way.
+	JackettMode          string `json:"jackett_mode"`
 	TMDBAPIKey           string `json:"tmdb_apikey"`
 	PageSize             int    `json:"page_size"`
 	AutoUpdate    bool   `json:"auto_update"`
 }
+
+// JackettModeManaged and JackettModeExternal are the accepted JackettMode
+// values. Anything else (including empty, for existing configs) is treated as
+// managed, which is the default this project ships.
+const (
+	JackettModeManaged  = "managed"
+	JackettModeExternal = "external"
+)
 
 func (s *Server) loadWebSettings() webSettings {
 	data, err := os.ReadFile(s.dataFile("web-settings.json"))
@@ -1403,6 +1418,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/indexers/jackett/install-deps", s.authCheck(s.handleJackettInstallDeps))
 	mux.HandleFunc("/indexers/jackett/check-update", s.authCheck(s.handleJackettCheckUpdate))
 	mux.HandleFunc("/indexers/jackett/update", s.authCheck(s.handleJackettUpdate))
+	mux.HandleFunc("/indexers/jackett/uninstall", s.authCheck(s.handleJackettUninstall))
 	mux.HandleFunc("/search/subscribe", s.authCheck(s.handleSearchSubscribe))
 	mux.HandleFunc("/rss/search", s.handleRssSearch)
 	mux.HandleFunc("/subs/dirs", s.authCheck(s.handleSubsDirs))
@@ -2078,6 +2094,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			changes = append(changes, fmt.Sprintf("timezone=%s", v))
 		}
 		// Jackett
+		if has("jackett_mode") {
+			if v := normalizeJackettMode(r.FormValue("jackett_mode")); v != normalizeJackettMode(ws.JackettMode) {
+				ws.JackettMode = v
+				changes = append(changes, fmt.Sprintf("jackett_mode=%s", v))
+			}
+		}
 		if has("jackett_url") {
 			if v := strings.TrimSpace(r.FormValue("jackett_url")); v != ws.JackettURL {
 				ws.JackettURL = v
@@ -2156,6 +2178,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.JackettURL = ws.JackettURL
 		data.JackettAPIKey = ws.JackettAPIKey
 		data.JackettAdminPassword = ws.JackettAdminPassword
+		data.JackettMode = normalizeJackettMode(ws.JackettMode)
 		data.TMDBAPIKey = ws.TMDBAPIKey
 		if s.Agent != nil {
 			data.Settings = s.Agent.GetSettings()
@@ -2198,6 +2221,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data.JackettURL = ws.JackettURL
 	data.JackettAPIKey = ws.JackettAPIKey
 	data.JackettAdminPassword = ws.JackettAdminPassword
+	data.JackettMode = normalizeJackettMode(ws.JackettMode)
 	data.TMDBAPIKey = ws.TMDBAPIKey
 	if s.Agent != nil {
 		data.Settings = s.Agent.GetSettings()
@@ -3987,6 +4011,78 @@ func (s *Server) handleJackettInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// normalizeJackettMode maps an arbitrary value onto a known mode.
+//
+// Empty means managed: that is the behaviour of every config written before the
+// switch existed, so an upgrade keeps working without touching settings.
+func normalizeJackettMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), JackettModeExternal) {
+		return JackettModeExternal
+	}
+	return JackettModeManaged
+}
+
+// handleJackettUninstall stops the managed Jackett and removes its files.
+//
+// The data directory is kept by default: it holds the API key and the user's
+// indexer configuration, and losing it silently would be a nasty surprise. A
+// purge is available explicitly.
+func (s *Server) handleJackettUninstall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		writeJSON(w, false, "POST required")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, false, err.Error())
+		return
+	}
+	purge := r.FormValue("purge") == "1"
+	dir := s.jackettInstallDir()
+
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		writeJSON(w, false, "未找到 Jackett 安装目录: "+dir)
+		return
+	}
+
+	log.Printf("[jackett] uninstall requested: dir=%s purge=%v", dir, purge)
+	steps, err := jackett.Uninstall(dir, purge)
+	if err != nil {
+		log.Printf("[jackett] uninstall failed: %v", err)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":  false,
+			"msg": err.Error(),
+			"log": steps,
+		})
+		return
+	}
+
+	// Clear the connection details only when the data directory went too;
+	// otherwise the config may still point at an instance the user keeps.
+	if purge {
+		s.applyJackettSettings("", "", "")
+		s.jackettCacheMu.Lock()
+		s.jackettCache = nil
+		s.jackettCacheMu.Unlock()
+	}
+
+	log.Printf("[jackett] uninstalled (purge=%v)", purge)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":    true,
+		"msg":   uninstallResultMessage(purge),
+		"log":   steps,
+		"purge": purge,
+		"dir":   dir,
+	})
+}
+
+func uninstallResultMessage(purge bool) string {
+	if purge {
+		return "已卸载 Jackett 并清除其数据（含索引器配置与 API Key）"
+	}
+	return "已卸载 Jackett，数据目录保留（含索引器配置与 API Key）"
+}
+
 // handleJackettEnv reports what the host provides for running Jackett.
 //
 // The panel calls this before offering an install so a missing dependency is
@@ -4112,7 +4208,15 @@ func (s *Server) handleJackettUpdate(w http.ResponseWriter, r *http.Request) {
 	if wasRunning {
 		log.Printf("[jackett] stopping before update")
 		if err := jackett.Stop(dir); err != nil {
+			// Replacing the tree underneath a live process leaves it serving
+			// from a half-swapped install. Refuse rather than risk that.
 			log.Printf("[jackett] stop before update failed: %v", err)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":          false,
+				"msg":         "无法停止正在运行的 Jackett，已取消更新以免文件被替换到运行中的进程下：" + err.Error(),
+				"was_running": true,
+			})
+			return
 		}
 	}
 
