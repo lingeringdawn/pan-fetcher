@@ -1382,15 +1382,32 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <span class="badge badge-running">SQLite</span>
         <span class="badge badge-done">115 API</span>
         <span class="badge badge-done">Torznab</span>
+        <span class="badge badge-done">Docker</span>
       </div>
       <div style="margin-top:16px;padding:12px;background:#f8fafc;border-radius:10px;border:1px solid var(--line);">
         <table style="width:100%;font-size:13px;border-collapse:collapse;">
           <tr><td style="padding:4px 0;color:var(--muted);width:80px;">{{index .T "about_version"}}</td><td><strong>{{if .AboutVersion}}pan-fetcher {{.AboutVersion}}{{else}}{{index .T "about_version_error"}}{{end}}</strong></td></tr>
           <tr><td style="padding:4px 0;color:var(--muted);">Go</td><td>1.25</td></tr>
-          <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_author"}}</td><td>lingeringdawn</td></tr>
+          <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_platform"}}</td><td>{{index .T "about_platform_value"}}</td></tr>
+          <tr><td style="padding:4px 0;color:var(--muted);">{{index .T "about_search_backend"}}</td><td>{{index .T "about_search_backend_value"}}</td></tr>
         </table>
       </div>
     </div>
+
+    <!-- author -->
+    <div class="card panel" style="margin-top:12px;">
+      <h3 style="margin:0 0 8px;">👤 {{index .T "about_author_title"}}</h3>
+      <p style="font-size:13px;line-height:1.8;margin:0 0 10px;">{{index .T "about_author_desc"}}</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px;">
+        <a href="https://www8ld.com/" target="_blank" rel="noopener"
+           style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;">
+          🏠 {{index .T "about_author_site"}}
+        </a>
+        <a href="https://github.com/lingeringdawn" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <div class="hint" style="margin-top:8px;font-size:12px;">www8ld.com</div>
+    </div>
+
     <div class="card panel" style="margin-top:12px;">
       <h3 style="margin:0 0 8px;">🔗 {{index .T "about_links"}}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;">
@@ -1399,6 +1416,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <a href="https://github.com/lingeringdawn/pan-fetcher/releases" target="_blank" rel="noopener">Releases</a>
         <span style="color:var(--line);">|</span>
         <a href="https://github.com/lingeringdawn/pan-fetcher/issues" target="_blank" rel="noopener">Issues</a>
+        <span style="color:var(--line);">|</span>
+        <a href="https://github.com/lingeringdawn/pan-fetcher/blob/master/CHANGELOG.md" target="_blank" rel="noopener">{{index .T "about_changelog"}}</a>
       </div>
     </div>
     <div class="card panel" style="margin-top:12px;">
@@ -1406,7 +1425,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         {{index .T "about_based_on"}}
         <a href="https://github.com/zhifengle/rss2cloud" target="_blank" rel="noopener">rss2cloud</a>
         &nbsp;·&nbsp;
-        <a href="https://github.com/Prowlarr/Prowlarr" target="_blank" rel="noopener">Prowlarr</a>
+        <a href="https://github.com/Jackett/Jackett" target="_blank" rel="noopener">Jackett</a>
         &nbsp;·&nbsp;
         <a href="https://github.com/Nahuimi/elevengo" target="_blank" rel="noopener">elevengo</a>
       </p>
@@ -2287,6 +2306,15 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               <input name="page_size" type="number" value="{{.PageSize}}" min="10" max="500" placeholder="50">
               <div class="hint" style="font-size:11px;">10–500，默认 50</div>
             </div>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+            <!-- Marks that this fieldset was part of the submission, so an
+                 unchecked box below is read as "off" rather than "not sent". -->
+            <input type="hidden" name="search_settings_submitted" value="1">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+              <input type="checkbox" name="filter_search_title" value="1" style="width:auto;margin:0;"{{if .FilterSearchTitle}} checked{{end}}>{{index .T "filter_search_title_label"}}
+            </label>
+            <div class="hint" style="font-size:11px;margin-top:4px;">{{index .T "filter_search_title_hint"}}</div>
           </div>
         </fieldset>
 

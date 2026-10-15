@@ -26,13 +26,20 @@
 
 基于 Jackett 的数百个索引器。标签筛选、关键词过滤、分页浏览，搜索结果自动去重。
 
+默认会**过滤掉标题不含搜索词的条目**——索引站匹配较宽松，简短剧名常带出大量无关结果，开启后噪音明显减少。可在设置页关闭。
+
 <p align="center"><img src=".github/images/1738.jpg" alt="资源搜索" width="70%"></p>
 
 ### 📡 Jackett 集成
 
-自动检测本机 Jackett 并读取其配置（含 API Key），无需手工填写；检测不到时可一键下载安装并启动。自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。也支持手动输入地址与 API Key 连接远程实例。
+两种使用方式，在设置页切换：
 
-> 搜索走标准 Torznab 协议；自动检测与一键安装目前仅适配 Jackett，Prowlarr 尚未支持。
+- **内置 Jackett**（默认）：自动检测本机实例并读取其配置（含 API Key）；检测不到可一键下载安装并启动。安装前会检测运行环境（发行版、glibc、ICU 库、磁盘空间、权限），缺少系统依赖时可一键安装。支持版本检测与一键更新、以及卸载（默认保留索引器配置）。
+- **外部 Jackett**：使用你自行部署的实例（本机或其他机器），只需填写地址与 API Key。本程序不会下载、启动或改动其文件。
+
+自动发现实例中的全部索引器，批量管理、连接测试。搜索结果标注来源，可独立选择参与搜索的索引器。
+
+> 搜索走标准 Torznab 协议。
 
 <p align="center"><img src=".github/images/1741.jpg" alt="索引器" width="70%"></p>
 
@@ -68,13 +75,15 @@
 
 ### 📜 运行日志
 
-实时日志输出，自动刷新，便于排查问题。
+实时日志输出，最新在前，自动刷新，便于排查问题。
 
 <p align="center"><img src=".github/images/1747.jpg" alt="运行日志" width="70%"></p>
 
 ### ⚙️ 部署友好
 
 Docker 一键部署、Linux systemd 安装脚本、Linux 预编译二进制（amd64 / arm64）、Web 界面配置。
+
+面板内置**检查更新与一键自更新**，升级后配置（含订阅过滤词、Jackett 连接信息）保持不变。
 
 <p align="center"><img src=".github/images/1755.jpg" alt="设置" width="70%"></p>
 
@@ -161,10 +170,14 @@ http = "http://127.0.0.1:7890"         # HTTP 代理（访问 Jackett 等）
 
 Go 1.25 · SQLite · 单体 `html/template`（零前端依赖） · [elevengo](https://github.com/Nahuimi/elevengo) 115 API · Torznab API
 
+## 👤 作者
+
+**lingeringdawn** — [www8ld.com](https://www8ld.com/)
+
 ## 🙏 致谢
 
 - [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud) — 项目原型
-- [Prowlarr](https://github.com/Prowlarr/Prowlarr) / [Jackett](https://github.com/Jackett/Jackett) — 索引引擎与 Torznab API 参考
+- [Jackett](https://github.com/Jackett/Jackett) — 索引引擎与 Torznab API
 - [Nahuimi/elevengo](https://github.com/Nahuimi/elevengo) — 115 API 库
 
 ---
@@ -178,16 +191,16 @@ Automated media downloader for 115 cloud storage. Search across BT indexers, dis
 ### Features
 
 - **🎬 TMDB Discover** — Search movies & TV shows, view full details (poster, overview, rating, genres), one-click jump to aggregated search.
-- **🔍 Aggregated Search** — Hundreds of indexers via Jackett. Tag filter, keyword filter, pagination, auto-dedup.
-- **📡 Jackett** — Auto-detect a local instance and read its API key; one-click download & install when absent; batch activate, connection test, source labels. (Search speaks Torznab; detection and install are Jackett-only for now.)
+- **🔍 Aggregated Search** — Hundreds of indexers via Jackett. Tag filter, keyword filter, pagination, auto-dedup. Results whose title lacks the search terms are filtered out by default (toggleable in Settings).
+- **📡 Jackett** — Two modes, switchable in Settings: **built-in** (auto-detect, one-click install, environment check, version check & update, uninstall) and **external** (point at your own instance; nothing is downloaded or modified). Indexer catalog with batch activate, connection test and source labels.
 - **📋 RSS Subscriptions** — Scheduled fetch, smart dedup, keyword filter, cache management.
 - **📥 Offline Download** — Magnet/ed2k/http batch submit with status tabs.
 - **📂 File Manager** — Browse and manage 115 cloud files (mkdir, rename, move, copy, delete).
 - **📊 Dashboard** — Stats overview, recent subscription items.
 - **🔔 Notifications** — WeChat Work webhook with per-event toggles.
-- **📜 Runtime Log** — Real-time log output with auto-refresh.
+- **📜 Runtime Log** — Real-time log output, newest first, auto-refresh.
 - **🐳 Docker** — One-command deploy via `docker-compose`, also on GHCR.
-- **⚙️ Web Admin** — CN/EN bilingual, HTTPS, password auth, in-app update.
+- **⚙️ Web Admin** — CN/EN bilingual, HTTPS, password auth, in-app self-update.
 
 ### Quick Start
 
@@ -256,9 +269,13 @@ http = "http://127.0.0.1:7890"
 
 Go 1.25 · SQLite · single `html/template` (zero frontend deps) · [elevengo](https://github.com/Nahuimi/elevengo) · Torznab API
 
+### Author
+
+**lingeringdawn** — [www8ld.com](https://www8ld.com/)
+
 ### Credits
 
-Based on [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud). Indexer engine inspired by [Prowlarr](https://github.com/Prowlarr/Prowlarr) & [Jackett](https://github.com/Jackett/Jackett).
+Based on [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud). Search is served by [Jackett](https://github.com/Jackett/Jackett) over its Torznab API.
 
 ### License
 

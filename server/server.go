@@ -189,6 +189,8 @@ type dashboardData struct {
 	JackettAdminPassword string
 	// JackettMode is "managed" or "external"; empty is treated as managed.
 	JackettMode          string
+	// FilterSearchTitle reflects the aggregated-search title filter.
+	FilterSearchTitle   bool
 	TMDBAPIKey           string
 	AboutVersion         string
 	AutoUpdate      bool
@@ -685,10 +687,28 @@ type webSettings struct {
 	// It only changes which controls the settings page offers; the connection
 	// details above are used either way.
 	JackettMode          string `json:"jackett_mode"`
-	TMDBAPIKey           string `json:"tmdb_apikey"`
-	PageSize             int    `json:"page_size"`
-	AutoUpdate    bool   `json:"auto_update"`
+	// FilterSearchTitle drops aggregated results whose title does not contain
+	// the query. It is a pointer so "never set" is distinguishable from "set to
+	// false": the feature defaults to on, and a plain bool would silently turn
+	// it off for every configuration written before it existed.
+	FilterSearchTitle *bool `json:"filter_search_title,omitempty"`
+	TMDBAPIKey        string `json:"tmdb_apikey"`
+	PageSize          int    `json:"page_size"`
+	AutoUpdate        bool   `json:"auto_update"`
 }
+
+// filterSearchTitle returns the effective title-filter setting, defaulting to
+// enabled when it has never been set.
+func (ws webSettings) filterSearchTitle() bool {
+	if ws.FilterSearchTitle == nil {
+		return true
+	}
+	return *ws.FilterSearchTitle
+}
+
+// boolPtr returns a pointer to v, for the settings fields that need to
+// distinguish "unset" from "false".
+func boolPtr(v bool) *bool { return &v }
 
 // JackettModeManaged and JackettModeExternal are the accepted JackettMode
 // values. Anything else (including empty, for existing configs) is treated as
@@ -2121,6 +2141,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				changes = append(changes, "jackett_admin_password=***")
 			}
 		}
+		// Aggregated search title filter. A checkbox only appears in the form
+		// data when checked, so presence means enabled and absence means
+		// disabled — but only when the form actually carried the field.
+		if has("filter_search_title") {
+			v := r.FormValue("filter_search_title") == "1"
+			if ws.FilterSearchTitle == nil || *ws.FilterSearchTitle != v {
+				ws.FilterSearchTitle = boolPtr(v)
+				changes = append(changes, fmt.Sprintf("filter_search_title=%v", v))
+			}
+		} else if has("search_settings_submitted") {
+			// The search fieldset was submitted without the checkbox: it was
+			// unchecked, which is an explicit "off".
+			if ws.FilterSearchTitle == nil || *ws.FilterSearchTitle {
+				ws.FilterSearchTitle = boolPtr(false)
+				changes = append(changes, "filter_search_title=false")
+			}
+		}
 		// TMDB
 		if has("tmdb_apikey") {
 			if v := strings.TrimSpace(r.FormValue("tmdb_apikey")); v != ws.TMDBAPIKey {
@@ -2179,6 +2216,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.JackettAPIKey = ws.JackettAPIKey
 		data.JackettAdminPassword = ws.JackettAdminPassword
 		data.JackettMode = normalizeJackettMode(ws.JackettMode)
+		data.FilterSearchTitle = ws.filterSearchTitle()
 		data.TMDBAPIKey = ws.TMDBAPIKey
 		if s.Agent != nil {
 			data.Settings = s.Agent.GetSettings()
@@ -2222,6 +2260,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data.JackettAPIKey = ws.JackettAPIKey
 	data.JackettAdminPassword = ws.JackettAdminPassword
 	data.JackettMode = normalizeJackettMode(ws.JackettMode)
+	data.FilterSearchTitle = ws.filterSearchTitle()
 	data.TMDBAPIKey = ws.TMDBAPIKey
 	if s.Agent != nil {
 		data.Settings = s.Agent.GetSettings()
@@ -2705,6 +2744,112 @@ func isValidGroup(g string) bool {
 		if allASCII { return true }
 	}
 	return false
+}
+
+// applyTitleFilter drops results whose title does not contain every query term.
+//
+// Torznab indexers match loosely: a search for a short or common title (the
+// documented case is "TARI TARI") comes back with a long tail of unrelated
+// releases, because the tracker matched on a fragment, a different season, or
+// simply ranked it for the query. Those entries are noise in a yEnc-style list
+// and, worse, they get pushed to 115 if the result is grabbed.
+//
+// Matching is deliberately loose in the other direction: every whitespace-
+// separated term must appear somewhere in the title, case-insensitively, but
+// the terms need not be adjacent and punctuation is ignored. That keeps
+// "TARI TARI" matching "[Group] TARI TARI - 01 (1080p)" while rejecting
+// unrelated titles, and it does not require the query to be an exact substring.
+//
+// The query is the one the user typed; the keyword filter (applyKeywordFilter)
+// is separate and still applies on top, since it expresses tag requirements
+// rather than the search itself.
+func applyTitleFilter(results []indexer.SearchResult, query string) []indexer.SearchResult {
+	terms := queryTerms(query)
+	if len(terms) == 0 {
+		return results
+	}
+	out := make([]indexer.SearchResult, 0, len(results))
+	for _, r := range results {
+		title := normalizeForMatch(r.Title)
+		ok := true
+		for _, t := range terms {
+			if !strings.Contains(title, t) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// queryTerms splits a search query into lower-case terms worth matching on.
+//
+// Single-character terms are dropped: they match almost everything and would
+// make the filter ineffective. Duplicates are collapsed, so a query that repeats
+// a word ("TARI TARI") requires one occurrence rather than two — the repetition
+// is how people emphasise a title, not a demand for it twice.
+func queryTerms(query string) []string {
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		// Strip punctuation that never appears meaningfully in a title search
+		// but does appear in queries, e.g. a trailing colon from an operator.
+		f = strings.Trim(f, `"'()[]{}:,;!?*/\|`)
+		if len([]rune(f)) < 2 {
+			continue
+		}
+		n := normalizeForMatch(f)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+// normalizeForMatch lower-cases a title and collapses the punctuation that
+// differs between a query and how a release names the same thing.
+//
+// Releases separate words with dots, underscores or brackets
+// ("TARI.TARI", "TARI_TARI", "TARI[TARI]"), so a plain substring test against
+// the raw title would miss matches the user expects. Everything except letters,
+// digits and CJK is turned into a single space, and runs of spaces collapse.
+func normalizeForMatch(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	lastSpace := true // avoid a leading space
+	for _, r := range strings.ToLower(s) {
+		if isMatchRune(r) {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// isMatchRune reports whether r survives normalisation.
+//
+// Letters, digits and any non-ASCII rune are kept: the last case covers CJK,
+// which is common in the titles this project targets and must not be stripped
+// as punctuation.
+func isMatchRune(r rune) bool {
+	if r >= 'a' && r <= 'z' {
+		return true
+	}
+	if r >= '0' && r <= '9' {
+		return true
+	}
+	return r > 0x7f
 }
 
 // applyKeywordFilter filters results using group-aware keyword matching.
@@ -3450,6 +3595,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		pageSize := ws.PageSize
 		if pageSize <= 0 {
 			pageSize = 50
+		}
+		// Drop results whose title does not contain the query before anything
+		// else looks at them, so paging, counts and tags all describe the same
+		// set the user sees.
+		if ws.filterSearchTitle() {
+			before := len(se.Results)
+			se.Results = applyTitleFilter(se.Results, q)
+			if dropped := before - len(se.Results); dropped > 0 {
+				log.Printf("[search] title filter dropped %d/%d results for %q", dropped, before, q)
+			}
 		}
 		searchCacheMu.Lock()
 		indexer.SortResults(se.Results, sortBy)
