@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -120,8 +119,14 @@ func logSender() {
 		url := webhookURL
 		mu.Unlock()
 		if url != "" {
-			doSend(url, msg)
+			if err := sendWework(url, client, msg); err != nil {
+				log.Printf("[notify] log push failed: %v", err)
+			}
 		}
+		// Generic webhooks can subscribe to log lines too. Dispatching here
+		// rather than in Logf means the 1/s throttle below applies to both
+		// destinations, so a chatty log cannot flood a receiver.
+		Dispatch(EventFromData(EventLog, "运行日志", msg, nil))
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -164,17 +169,10 @@ func Webhook() string {
 	return webhookURL
 }
 
-// weworkMsg is the WeChat Work markdown message payload.
-type weworkMsg struct {
-	MsgType  string       `json:"msgtype"`
-	Markdown weworkMD     `json:"markdown"`
-}
-
-type weworkMD struct {
-	Content string `json:"content"`
-}
-
-// Send sends a markdown notification if enabled.
+// Send delivers a markdown notification to the WeChat Work channel.
+//
+// It is kept for the call sites that have not moved to Dispatch yet. New code
+// should build an Event and call Dispatch, which also reaches generic webhooks.
 func Send(content string, enabled bool) {
 	if !enabled {
 		return
@@ -185,31 +183,37 @@ func Send(content string, enabled bool) {
 	if url == "" {
 		return
 	}
-	go doSend(url, content)
+	go func() {
+		if err := sendWework(url, client, content); err != nil {
+			log.Printf("[notify] send failed: %v", err)
+		}
+	}()
 }
 
-func doSend(url, content string) {
-	msg := weworkMsg{
-		MsgType: "markdown",
-		Markdown: weworkMD{
-			Content: content,
-		},
-	}
-	body, err := json.Marshal(&msg)
-	if err != nil {
-		log.Printf("[notify] marshal error: %v", err)
+// DispatchEvent enqueues an event, delivering it to every subscribed channel.
+//
+// The markdown body is sent to WeChat Work (when it is configured and the
+// caller's feature toggle is on) and the whole event is sent to generic
+// webhooks. Passing enabled=false suppresses only the WeChat Work delivery, so
+// the pre-existing per-feature toggles keep their meaning while webhooks remain
+// independently controllable through their own event subscriptions.
+func DispatchEvent(ev Event, enabled bool) {
+	if !enabled {
+		// Webhooks are still told: their subscriptions are the gate, and the
+		// legacy toggles only ever governed WeChat Work.
+		Dispatch(ev)
 		return
 	}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		log.Printf("[notify] send failed: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		log.Printf("[notify] wework responded %d: %s", resp.StatusCode, string(respBody))
-	}
+	Dispatch(ev)
+}
+
+// EventFromMessage builds an event from a pre-formatted markdown message.
+//
+// It is the bridge for existing call sites: the markdown is reused as both the
+// WeChat Work content and the webhook body, and the structured data is left to
+// the caller when it has any.
+func EventFromMessage(t EventType, title, body string) Event {
+	return Event{Type: t, Time: now(), Title: title, Body: body}
 }
 
 // TaskSubmitted formats a message for magnet task submission.
@@ -224,12 +228,31 @@ func TaskSubmitted(count int, cid string, names []string) string {
 	return msg
 }
 
+// TaskSubmittedEvent builds the event for a task submission.
+func TaskSubmittedEvent(count int, cid string, names []string) Event {
+	return EventFromData(EventTaskSubmitted, "离线任务已提交", TaskSubmitted(count, cid, names),
+		map[string]interface{}{
+			"count": count,
+			"cid":   cid,
+			"names": names,
+		})
+}
+
 // TaskFailed formats a message for a failed task.
 func TaskFailed(name string, cid string) string {
 	return fmt.Sprintf(`## 离线任务失败
 > **任务**: %s
 > **目标目录**: %s
 > **时间**: %s`, name, cid, now().Format("15:04:05"))
+}
+
+// TaskFailedEvent builds the event for a failed task.
+func TaskFailedEvent(name, cid string) Event {
+	return EventFromData(EventTaskFailed, "离线任务失败", TaskFailed(name, cid),
+		map[string]interface{}{
+			"name": name,
+			"cid":  cid,
+		})
 }
 
 // RSSFound formats a message when new items are found in RSS feed.
@@ -244,11 +267,37 @@ func RSSFound(subName string, count int, names []string) string {
 	return msg
 }
 
+// RSSFoundEvent builds the event for new RSS resources.
+func RSSFoundEvent(subName string, count int, names []string) Event {
+	return EventFromData(EventRSSFound, "RSS 新资源", RSSFound(subName, count, names),
+		map[string]interface{}{
+			"sub":   subName,
+			"count": count,
+			"names": names,
+		})
+}
+
 // ServerStarted formats a startup message.
 func ServerStarted(port int) string {
 	return fmt.Sprintf(`## pan-fetcher 已启动
 > **端口**: %d
 > **时间**: %s`, port, now().Format("2006-01-02 15:04:05"))
+}
+
+// ServerStartedEvent builds the event for server startup.
+func ServerStartedEvent(port int) Event {
+	return EventFromData(EventServerStarted, "pan-fetcher 已启动", ServerStarted(port),
+		map[string]interface{}{"port": port})
+}
+
+// UpdateAvailableEvent builds the event for a new release.
+func UpdateAvailableEvent(latest, current string) Event {
+	body := "pan-fetcher 发现新版本 " + latest + "（当前 " + current + "），请前往设置页手动更新"
+	return EventFromData(EventUpdateAvailable, "发现新版本", body,
+		map[string]interface{}{
+			"latest":  latest,
+			"current": current,
+		})
 }
 
 // SetLogEnabled enables or disables log push notifications.
@@ -279,26 +328,9 @@ func Logf(format string, args ...interface{}) {
 		logQueue <- content
 	}
 }
+// Test verifies a WeChat Work webhook URL.
+//
 // Returns nil on success, error otherwise.
 func Test(webhookURL string) error {
-	msg := weworkMsg{
-		MsgType: "markdown",
-		Markdown: weworkMD{
-			Content: fmt.Sprintf("## pan-fetcher 通知测试 ✅\n> 时间: %s\n> Webhook 配置成功", now().Format("15:04:05")),
-		},
-	}
-	body, err := json.Marshal(&msg)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-	return nil
+	return testWework(webhookURL, client)
 }

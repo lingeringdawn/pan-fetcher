@@ -1160,6 +1160,57 @@ func (s *Server) LoadNotifyConfig() {
 	SetTimezone(ws.Timezone)
 	notify.SetTimezone(ws.Timezone)
 	notify.SetLogEnabled(ws.NotifyLog)
+	s.ReloadNotifyChannels()
+}
+
+// notifyWebhooksPath is where the generic webhook channel list is stored.
+func (s *Server) notifyWebhooksPath() string {
+	return s.dataFile("webhooks.json")
+}
+
+// ReloadNotifyChannels rebuilds the channel list from stored configuration.
+//
+// It is called at startup and after the settings page changes anything, so an
+// edit takes effect without a restart.
+func (s *Server) ReloadNotifyChannels() {
+	notify.SetRouterDataDir(dataDir)
+
+	hooks, err := notify.LoadWebhooks(s.notifyWebhooksPath())
+	if err != nil {
+		log.Printf("[notify] 读取 webhook 配置失败: %v", err)
+		hooks = nil
+	}
+	// The WeChat Work URL comes from the in-memory value, which the settings
+	// page and config.toml both write through SetWebhook.
+	channels := notify.BuildChannels(notify.Webhook(), hooks)
+	notify.SetChannels(channels)
+
+	enabled := 0
+	for _, h := range hooks {
+		if h.Enabled {
+			enabled++
+		}
+	}
+	log.Printf("[notify] 通知渠道已加载: %d 个（其中启用的 webhook %d 个）", len(channels), enabled)
+}
+
+// loadWebhookConfigs returns the stored webhook channels.
+func (s *Server) loadWebhookConfigs() []notify.WebhookConfig {
+	hooks, err := notify.LoadWebhooks(s.notifyWebhooksPath())
+	if err != nil {
+		log.Printf("[notify] 读取 webhook 配置失败: %v", err)
+		return nil
+	}
+	return hooks
+}
+
+// saveWebhookConfigs persists the webhook channels and re-registers them.
+func (s *Server) saveWebhookConfigs(hooks []notify.WebhookConfig) error {
+	if err := notify.SaveWebhooks(s.notifyWebhooksPath(), hooks); err != nil {
+		return err
+	}
+	s.ReloadNotifyChannels()
+	return nil
 }
 
 // LoadJackettConfig reads Jackett settings from web-settings.json.
@@ -1220,6 +1271,9 @@ func (s *Server) Start(ctx context.Context) error {
 		scheme = "https"
 	}
 	log.Printf("server started on %s://0.0.0.0:%d\n", scheme, s.Port)
+	// Announce the startup so notification channels subscribed to
+	// server.started learn the service is back (useful after a self-update).
+	notify.DispatchEvent(notify.ServerStartedEvent(s.Port), true)
 	if useTLS {
 		return srv.ListenAndServeTLS(s.CertFile, s.KeyFile)
 	}
@@ -1262,7 +1316,7 @@ func (s *Server) autoCheckUpdates() {
 				s.updateNotice = latest
 				s.updateNoticeMu.Unlock()
 				log.Printf("[update] 发现新版本 %s（当前 %s），请前往设置页手动更新", latest, Version)
-				notify.Send("pan-fetcher 发现新版本 "+latest+"（当前 "+Version+"），请前往设置页手动更新", true)
+				notify.DispatchEvent(notify.UpdateAvailableEvent(latest, Version), true)
 			}
 		}
 
@@ -1350,7 +1404,7 @@ func (s *Server) autoRunSubscriptions() {
 						newItems := after - before
 						if newItems > 0 {
 							notify.RecordItems(subKey, names)
-							notify.Send(notify.RSSFound(subKey, newItems, names), ws.NotifyRSS)
+							notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), ws.NotifyRSS)
 						}
 					}
 				}()
@@ -1420,6 +1474,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/settings/test115", s.authCheck(s.handleTest115))
 	mux.HandleFunc("/settings/test-jackett", s.authCheck(s.handleTestJackett))
+	mux.HandleFunc("/api/webhooks", s.authCheck(s.handleWebhooks))
 	mux.HandleFunc("/settings/restart", s.authCheck(s.handleRestart))
 	mux.HandleFunc("/settings/check-update", s.authCheck(s.handleCheckUpdate))
 	mux.HandleFunc("/settings/update", s.authCheck(s.handleDoUpdate))
@@ -1732,7 +1787,7 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 	}
 	subKey := "task-" + time.Now().Format("150405")
 	notify.RecordItems(subKey, names)
-	notify.Send(notify.TaskSubmitted(len(task.Tasks), task.Cid, names), ws.NotifyLog || ws.NotifyTask)
+	notify.DispatchEvent(notify.TaskSubmittedEvent(len(task.Tasks), task.Cid, names), ws.NotifyLog || ws.NotifyTask)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"status":"ok","message":"%s"}`, trf(s.langFromAgent(), "tasks_submitted_fmt", len(task.Tasks)))
 }
@@ -3018,6 +3073,206 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Test message sent"})
+}
+
+// handleWebhooks is the CRUD endpoint for generic webhook channels.
+//
+// Actions: list, add, update, delete, toggle, test. Keeping them on one endpoint
+// matches how the rest of this panel works (a single POST with an action field)
+// and avoids a route per operation.
+func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	hooks := s.loadWebhookConfigs()
+
+	if r.Method == http.MethodGet {
+		lang := requestLang(r)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":       true,
+			"webhooks": hooks,
+			"events":   eventTypeList(lang),
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, false, "GET 或 POST required")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, false, err.Error())
+		return
+	}
+
+	action := strings.TrimSpace(r.FormValue("webhook_action"))
+	switch action {
+	case "add", "update":
+		cfg, err := webhookConfigFromForm(r)
+		if err != nil {
+			writeJSON(w, false, err.Error())
+			return
+		}
+		if action == "add" {
+			if cfg.ID == "" {
+				cfg.ID = notify.NewWebhookID()
+			}
+			if cfg.Name == "" {
+				cfg.Name = "Webhook " + strconv.Itoa(len(hooks)+1)
+			}
+			hooks = append(hooks, cfg)
+		} else {
+			found := false
+			for i := range hooks {
+				if hooks[i].ID == cfg.ID {
+					// An empty secret submitted by the edit form means "keep the
+					// stored one": the value is never rendered back into the
+					// page, so the form cannot resubmit it.
+					if cfg.Secret == "" {
+						cfg.Secret = hooks[i].Secret
+					}
+					hooks[i] = cfg
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeJSON(w, false, "未找到该 Webhook")
+				return
+			}
+		}
+		if err := s.saveWebhookConfigs(hooks); err != nil {
+			log.Printf("[notify] 保存 webhook 失败: %v", err)
+			writeJSON(w, false, "保存失败: "+err.Error())
+			return
+		}
+		log.Printf("[notify] webhook %s: id=%s events=%v enabled=%v",
+			action, cfg.ID, cfg.Events, cfg.Enabled)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已保存", "webhooks": hooks})
+
+	case "delete":
+		id := strings.TrimSpace(r.FormValue("id"))
+		kept := make([]notify.WebhookConfig, 0, len(hooks))
+		for _, h := range hooks {
+			if h.ID != id {
+				kept = append(kept, h)
+			}
+		}
+		if len(kept) == len(hooks) {
+			writeJSON(w, false, "未找到该 Webhook")
+			return
+		}
+		if err := s.saveWebhookConfigs(kept); err != nil {
+			writeJSON(w, false, "保存失败: "+err.Error())
+			return
+		}
+		log.Printf("[notify] webhook deleted: id=%s", id)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已删除", "webhooks": kept})
+
+	case "toggle":
+		id := strings.TrimSpace(r.FormValue("id"))
+		on := r.FormValue("enabled") == "1"
+		found := false
+		for i := range hooks {
+			if hooks[i].ID == id {
+				hooks[i].Enabled = on
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeJSON(w, false, "未找到该 Webhook")
+			return
+		}
+		if err := s.saveWebhookConfigs(hooks); err != nil {
+			writeJSON(w, false, "保存失败: "+err.Error())
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已更新", "webhooks": hooks})
+
+	case "test":
+		// A saved channel is tested as configured; an unsaved one is tested from
+		// the form values, so the URL can be verified before committing it.
+		cfg, err := webhookConfigFromForm(r)
+		if err != nil {
+			writeJSON(w, false, err.Error())
+			return
+		}
+		if cfg.ID != "" && cfg.URL == "" {
+			for _, h := range hooks {
+				if h.ID == cfg.ID {
+					cfg.URL = h.URL
+					if cfg.Secret == "" {
+						cfg.Secret = h.Secret
+					}
+					break
+				}
+			}
+		}
+		if err := notify.TestWebhookChannel(cfg); err != nil {
+			log.Printf("[notify] webhook 测试失败: %v", err)
+			writeJSON(w, false, "测试失败: "+err.Error())
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "测试通知已发送"})
+
+	default:
+		writeJSON(w, false, "未知操作: "+action)
+	}
+}
+
+// webhookConfigFromForm reads a webhook configuration from submitted form data.
+func webhookConfigFromForm(r *http.Request) (notify.WebhookConfig, error) {
+	rawURL := strings.TrimSpace(r.FormValue("url"))
+	if rawURL != "" && !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return notify.WebhookConfig{}, fmt.Errorf("Webhook URL 必须以 http:// 或 https:// 开头")
+	}
+	cfg := notify.WebhookConfig{
+		ID:      strings.TrimSpace(r.FormValue("id")),
+		Name:    strings.TrimSpace(r.FormValue("name")),
+		URL:     rawURL,
+		Secret:  strings.TrimSpace(r.FormValue("secret")),
+		Events:  r.Form["events"],
+		Enabled: r.FormValue("enabled") == "1",
+	}
+	return cfg, nil
+}
+
+// eventTypeList renders the subscribable event types for the settings page.
+func eventTypeList(lang string) []map[string]string {
+	out := make([]map[string]string, 0, len(notify.AllEventTypes()))
+	for _, t := range notify.AllEventTypes() {
+		out = append(out, map[string]string{
+			"value": string(t),
+			"label": eventTypeLabel(lang, t),
+		})
+	}
+	return out
+}
+
+// eventTypeLabel gives an event type a translated description.
+func eventTypeLabel(lang string, t notify.EventType) string {
+	switch t {
+	case notify.EventTaskSubmitted:
+		return tr(lang, "event_task_submitted")
+	case notify.EventTaskFailed:
+		return tr(lang, "event_task_failed")
+	case notify.EventRSSFound:
+		return tr(lang, "event_rss_found")
+	case notify.EventUpdateAvailable:
+		return tr(lang, "event_update_available")
+	case notify.EventServerStarted:
+		return tr(lang, "event_server_started")
+	case notify.EventLog:
+		return tr(lang, "event_log")
+	}
+	return string(t)
+}
+
+// requestLang reads the panel language from the request cookie.
+func requestLang(r *http.Request) string {
+	if c, err := r.Cookie("r2c_lang"); err == nil && c.Value == "en" {
+		return "en"
+	}
+	return "zh"
 }
 
 func (s *Server) handleAPILang(w http.ResponseWriter, r *http.Request) {
@@ -4979,7 +5234,7 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 		if newItems > 0 {
 			notify.RecordItems(subKey, names)
 			ws := s.loadWebSettings()
-			notify.Send(notify.RSSFound(subKey, newItems, names), ws.NotifyRSS)
+			notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), ws.NotifyRSS)
 		}
 		log.Printf("[subs] run completed: %s, new=%d", subKey, newItems)
 	}()

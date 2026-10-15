@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.0.15
+
+### 新增
+- **通用 Webhook 通知（多渠道路由 + HMAC 签名）**：除企业微信外，可添加任意数量的 Webhook。事件以 JSON POST 到指定地址，填写密钥后使用 **HMAC-SHA256 签名**，接收端可据此校验来源。
+
+  事件类型：`task.submitted`（离线任务已提交）、`task.failed`（离线任务失败）、`rss.found`（订阅发现新资源）、`update.available`（发现新版本）、`server.started`（服务已启动）、`log`（运行日志）。每个 Webhook 可单独订阅事件，不选则订阅全部。
+
+  请求格式：
+
+  ```
+  POST <你的地址>
+  Content-Type: application/json
+  X-Pan-Fetcher-Event: rss.found
+  X-Pan-Fetcher-Signature: hmac-sha256=<hex>
+  X-Pan-Fetcher-Signature-Algorithm: hmac-sha256
+  X-Pan-Fetcher-Delivery: <本次投递 id>
+
+  {"type":"rss.found","time":"2026-10-15T17:20:12+08:00",
+   "title":"RSS 新资源","body":"## RSS 新资源...",
+   "data":{"sub":"侦探已死","count":2,"names":["..."]}}
+  ```
+
+  签名是对**请求体原文**计算 HMAC-SHA256。`X-Pan-Fetcher-Delivery` 在重试时保持不变，接收端可据此去重。
+
+  投递为重试一次（仅针对网络错误与 5xx）；4xx 不重试，因为对方会给出同样的答复。投递异步执行，接收端故障不会阻塞下载流程。
+
+### 变更
+- **通知层重构**：原先发送逻辑硬编码到企业微信（`Send` 接收已格式化文本，Webhook 地址是包级变量），新增渠道需改动每个调用点。现改为「事件 → 渠道」路由：调用点只上报发生了什么，由渠道声明自己订阅哪些事件。
+- **企业微信行为不变**：仍受原有的「离线任务 / RSS / 运行日志」三个开关控制。运行日志刻意不从事件路由投递，而是由既有的 1 秒节流推送器负责——否则每条日志会被发送两次。
+- **Webhook 地址在日志中脱敏**：Webhook 地址常把令牌放在路径里（Slack、Discord、企业微信皆如此），日志只保留主机名。
+
 ## v2.0.14
 
 ### 修复

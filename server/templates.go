@@ -2020,6 +2020,152 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           btn.disabled=false;
         }
 
+        // ---- generic webhooks ----------------------------------------------
+        var webhookEvents=[];
+
+        function webhookMsg(text,isErr){
+          var el=document.getElementById('webhook-msg');
+          if(!el)return;
+          el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+(isErr?'✗ ':'✓ ')+text+'</span>';
+          if(!isErr) setTimeout(function(){el.innerHTML='';},2500);
+        }
+
+        async function loadWebhooks(){
+          var box=document.getElementById('webhook-list');
+          if(!box)return;
+          try{
+            var r=await fetch('/api/webhooks');
+            var j=await r.json();
+            if(!j.ok){box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>';return;}
+            webhookEvents=j.events||[];
+            renderWebhooks(j.webhooks||[]);
+          }catch(e){
+            box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+          }
+        }
+
+        function webhookEventCheckboxes(selected){
+          selected=selected||[];
+          var h='';
+          webhookEvents.forEach(function(ev){
+            var on=selected.indexOf(ev.value)>=0;
+            h+='<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin:0 10px 4px 0;cursor:pointer;">'
+              +'<input type="checkbox" name="events" value="'+ev.value+'" style="width:auto;margin:0;"'+(on?' checked':'')+'>'
+              +ev.label+'</label>';
+          });
+          return h;
+        }
+
+        // The rows are rebuilt from the server's list after every mutation, so
+        // the page never shows a state the server does not have.
+        function renderWebhooks(list){
+          var box=document.getElementById('webhook-list');
+          if(!box)return;
+          if(!list.length){
+            box.innerHTML='<div class="hint">{{index .T "webhook_empty"}}</div>';
+            return;
+          }
+          var h='';
+          list.forEach(function(w){
+            h+='<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--bg);">';
+            h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
+            h+='<strong style="font-size:13px;">'+escHTML(w.name||w.id)+'</strong>';
+            h+='<code style="font-size:11px;color:var(--muted);word-break:break-all;">'+escHTML(w.url)+'</code>';
+            h+=w.secret?'<span class="badge badge-done" style="font-size:10px;">HMAC</span>':'';
+            h+=w.enabled?'<span class="badge badge-running" style="font-size:10px;">{{index .T "webhook_enabled"}}</span>'
+                        :'<span class="badge" style="font-size:10px;opacity:.6;">{{index .T "disabled"}}</span>';
+            h+='<span style="flex:1;"></span>';
+            h+='<button type="button" onclick="webhookToggle(\''+w.id+'\','+(w.enabled?'false':'true')+')" style="margin:0;padding:3px 10px;font-size:11px;">'+(w.enabled?'{{index .T "disable"}}':'{{index .T "enable"}}')+'</button>';
+            h+='<button type="button" onclick="webhookTest(\''+w.id+'\')" style="margin:0 0 0 4px;padding:3px 10px;font-size:11px;background:var(--accent-2);">{{index .T "webhook_test"}}</button>';
+            h+='<button type="button" onclick="webhookDelete(\''+w.id+'\')" style="margin:0 0 0 4px;padding:3px 10px;font-size:11px;background:var(--danger);">{{index .T "webhook_delete"}}</button>';
+            h+='</div>';
+            if(w.events&&w.events.length){
+              h+='<div style="font-size:11px;color:var(--muted);margin-top:6px;">{{index .T "webhook_events"}}: '+w.events.map(escHTML).join('、')+'</div>';
+            }else{
+              h+='<div style="font-size:11px;color:var(--muted);margin-top:6px;">{{index .T "webhook_events_all"}}</div>';
+            }
+            h+='</div>';
+          });
+          box.innerHTML=h;
+        }
+
+        // Minimal escaping: webhook values are user input echoed back into HTML.
+        function escHTML(s){
+          return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+          });
+        }
+
+        function webhookAdd(){
+          showModal('{{index .T "webhook_add"}}',
+            '<div><label>{{index .T "webhook_name"}}</label><input id="wh-name" placeholder="My hook" style="width:100%;"></div>'
+            +'<div style="margin-top:8px;"><label>{{index .T "webhook_url"}}</label><input id="wh-url" placeholder="https://example.com/hook" style="width:100%;"></div>'
+            +'<div style="margin-top:8px;"><label>{{index .T "webhook_secret"}}</label><input id="wh-secret" placeholder="{{index .T "webhook_secret_ph"}}" style="width:100%;"></div>'
+            +'<div style="margin-top:10px;"><label>{{index .T "webhook_events"}}</label><div style="margin-top:4px;">'+webhookEventCheckboxes([])+'</div>'
+            +'<div class="hint" style="font-size:11px;">{{index .T "webhook_events_all"}}</div></div>',
+            [{text:'{{index .T "webhook_cancel"}}',cls:'var(--danger)',cb:function(){closeModal()}},
+             {text:'{{index .T "webhook_save"}}',cls:'var(--accent-2)',cb:function(){webhookSubmit('add','');}}]);
+        }
+
+        async function webhookSubmit(action,id){
+          var fd=new URLSearchParams();
+          fd.set('webhook_action',action);
+          if(id) fd.set('id',id);
+          var n=document.getElementById('wh-name'), u=document.getElementById('wh-url'), s=document.getElementById('wh-secret');
+          if(n) fd.set('name',n.value.trim());
+          if(u) fd.set('url',u.value.trim());
+          if(s) fd.set('secret',s.value.trim());
+          document.querySelectorAll('input[name="events"]:checked').forEach(function(c){fd.append('events',c.value);});
+          fd.set('enabled','1');
+          try{
+            var r=await fetch('/api/webhooks',{method:'POST',body:fd});
+            var j=await r.json();
+            if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
+            closeModal();
+            webhookMsg(j.msg||'ok',false);
+            renderWebhooks(j.webhooks||[]);
+          }catch(e){webhookMsg(e.message,true);}
+        }
+
+        async function webhookToggle(id,on){
+          var fd=new URLSearchParams();
+          fd.set('webhook_action','toggle');
+          fd.set('id',id);
+          fd.set('enabled',on?'1':'0');
+          try{
+            var r=await fetch('/api/webhooks',{method:'POST',body:fd});
+            var j=await r.json();
+            if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
+            renderWebhooks(j.webhooks||[]);
+          }catch(e){webhookMsg(e.message,true);}
+        }
+
+        async function webhookDelete(id){
+          if(!(await confirmAsync('{{index .T "webhook_confirm_delete"}}')))return;
+          var fd=new URLSearchParams();
+          fd.set('webhook_action','delete');
+          fd.set('id',id);
+          try{
+            var r=await fetch('/api/webhooks',{method:'POST',body:fd});
+            var j=await r.json();
+            if(!j.ok){webhookMsg(j.msg||'failed',true);return;}
+            webhookMsg(j.msg||'ok',false);
+            renderWebhooks(j.webhooks||[]);
+          }catch(e){webhookMsg(e.message,true);}
+        }
+
+        async function webhookTest(id){
+          webhookMsg('{{index .T "testing"}}',false);
+          var fd=new URLSearchParams();
+          fd.set('webhook_action','test');
+          fd.set('id',id);
+          try{
+            var r=await fetch('/api/webhooks',{method:'POST',body:fd});
+            var j=await r.json();
+            webhookMsg(j.msg||'failed',!j.ok);
+          }catch(e){webhookMsg(e.message,true);}
+        }
+
         // ---- Jackett mode --------------------------------------------------
         // The radio only decides which controls are shown; the value is stored
         // when the form is submitted, like every other setting.
@@ -2355,6 +2501,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           </div>
         </fieldset>
 
+        <!-- Group: generic webhooks -->
+        <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🔔 {{index .T "webhook_section"}}</legend>
+          <div class="hint" style="margin-bottom:10px;">{{index .T "webhook_hint"}}</div>
+          <div id="webhook-list"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+          <div style="margin-top:10px;">
+            <button type="button" onclick="webhookAdd()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent-2);">{{index .T "webhook_add"}}</button>
+          </div>
+          <div class="hint" style="margin-top:10px;font-size:11px;">{{index .T "webhook_signature_doc"}}</div>
+          <div id="webhook-msg" style="font-size:12px;margin-top:8px;"></div>
+        </fieldset>
+
         <!-- Group: Jackett -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
           <legend style="font-weight:600;font-size:14px;padding:0 8px;">🦜 Jackett</legend>
@@ -2444,6 +2602,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       // Populate the managed-Jackett panels on load. Both are cheap (a local
       // check and one GitHub request) and only rendered in managed mode.
       (function(){
+        loadWebhooks();
         var managed=document.querySelector('input[name="jackett_mode"][value="managed"]');
         if(managed&&managed.checked){ jkCheckEnv(); jkCheckUpdate(); }
       })();
