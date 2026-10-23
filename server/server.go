@@ -5404,12 +5404,28 @@ func (s *Server) pageData(message, errMsg string) dashboardData {
 }
 
 func (s *Server) pageDataWithCache(page, message, errMsg string) dashboardData {
+	// Language resolution, in order of authority:
+	//
+	//   1. the agent's setting, which is what the logged-in panel uses;
+	//   2. web-settings.json, which is what /api/lang writes;
+	//   3. Chinese.
+	//
+	// The web-settings fallback matters because the agent is nil until 115 is
+	// logged in. Without it, switching to English on a fresh install did nothing
+	// until a 115 login happened — the cookie and the stored preference were
+	// both set, but the page kept rendering Chinese.
 	lang := "zh"
 	if s.Agent != nil {
-		st := s.Agent.GetSettings()
-		if st.Lang != "" {
+		if st := s.Agent.GetSettings(); st.Lang != "" {
 			lang = st.Lang
 		}
+	}
+	ws := s.loadWebSettings()
+	if ws.Lang != "" && (s.Agent == nil || s.Agent.GetSettings().Lang == "") {
+		lang = ws.Lang
+	}
+	if lang != "zh" && lang != "en" {
+		lang = "zh"
 	}
 	data := dashboardData{
 		Message:     message,
@@ -5419,7 +5435,6 @@ func (s *Server) pageDataWithCache(page, message, errMsg string) dashboardData {
 		AllTagsJSON:   template.JS("[]"),
 		AllGroupsJSON: template.JS("[]"),
 	}
-	ws := s.loadWebSettings()
 	data.PageSize = ws.PageSize
 	if data.PageSize <= 0 { data.PageSize = 50 }
 	if s.Agent != nil {

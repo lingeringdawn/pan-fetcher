@@ -5,8 +5,8 @@ import "fmt"
 var translations = map[string]map[string]string{
 	"zh": {
 		"title":           "pan-fetcher 管理页",
-		"logout":          "退出",
-		"about":           "关于",
+		"logout":          "🚪 退出",
+		"about":           "ℹ️ 关于",
 		"home":            "📥 离线下载",
 		"dashboard":       "📊 仪表盘",
 		"total_tasks":     "总任务",
@@ -434,8 +434,8 @@ var translations = map[string]map[string]string{
 	},
 	"en": {
 		"title":           "pan-fetcher Dashboard",
-		"logout":          "Logout",
-		"about":           "About",
+		"logout":          "🚪 Logout",
+		"about":           "ℹ️ About",
 		"home":            "📥 Offline",
 		"dashboard":       "📊 Dashboard",
 		"total_tasks":     "Total Tasks",

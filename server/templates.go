@@ -3,11 +3,106 @@ package server
 import (
 	"html/template"
 	"strings"
+	"unicode"
 )
 
 
+// splitNavLabel separates a navigation label into its leading icon and the
+// remaining text.
+//
+// Labels are stored in i18n as "<emoji> text" (for example "📊 仪表盘"). The
+// collapsed sidebar shows only the icon, so the two parts have to be separable
+// at render time.
+//
+// The icon is a leading run of characters that are icon-like rather than a
+// word: symbols, and the code points emoji are built from. A label with no icon
+// returns an empty icon and the whole label as text, so a plain label still
+// renders correctly rather than disappearing.
+func splitNavLabel(label string) (icon, text string) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return "", ""
+	}
+	i := strings.IndexAny(label, " \t")
+	if i <= 0 {
+		// No space: the whole label is text.
+		return "", label
+	}
+	candidate := label[:i]
+	if !isIconSequence(candidate) {
+		return "", label
+	}
+	return candidate, strings.TrimSpace(label[i:])
+}
+
+// isIconSequence reports whether s looks like an icon rather than a word.
+func isIconSequence(s string) bool {
+	runes := []rune(s)
+	for idx := 0; idx < len(runes); idx++ {
+		r := runes[idx]
+		if isIconRune(r) {
+			continue
+		}
+		// A letter is normally a word, but some icons are letters followed by
+		// VARIATION SELECTOR-16, which is how emoji presentation is spelled.
+		// "ℹ️" is exactly that: U+2139 INFORMATION SOURCE (a letter) + U+FE0F.
+		if idx+1 < len(runes) && runes[idx+1] == '\uFE0F' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isIconRune reports whether r belongs to an icon rather than a word.
+//
+// Letters are rejected so a label such as "Log out" keeps its leading word.
+// The ranges below cover the symbols and pictographs the navigation uses;
+// anything else falls through to a category test that keeps marks and symbols
+// while rejecting letters, digits, punctuation and spaces.
+func isIconRune(r rune) bool {
+	switch {
+	case r == '\uFE0F', r == '\uFE0E': // variation selectors 16 / 15
+		return true
+	case r == '\u200D': // zero-width joiner
+		return true
+	case r >= 0x1F000 && r <= 0x1FAFF: // emoji and pictographs
+		return true
+	case r >= 0x1F3FB && r <= 0x1F3FF: // skin-tone modifiers
+		return true
+	case r >= 0x2190 && r <= 0x2BFF: // arrows, misc symbols, dingbats
+		return true
+	case r >= 0x2600 && r <= 0x27BF: // misc symbols and dingbats
+		return true
+	}
+	if unicode.IsLetter(r) || unicode.IsNumber(r) {
+		return false
+	}
+	return !unicode.IsPunct(r) && !unicode.IsSpace(r)
+}
+
 var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
 	"hasPrefix": strings.HasPrefix,
+	// navIcon and navText split a navigation label into the icon and the words.
+	//
+	// The collapsed sidebar is a narrow icon rail, so it needs the emoji on its
+	// own and the text wrapped in something it can hide. The labels are already
+	// written as "<emoji> words" in i18n, so splitting there keeps a single
+	// source of truth instead of duplicating every label in the template.
+	//
+	// Both take the language, because the sidebar is rendered once per request
+	// and a package-level "current language" would race between requests.
+	"navIcon": func(lang, key string) template.HTML {
+		icon, _ := splitNavLabel(tr(lang, key))
+		return template.HTML(`<span class="nav-icon">` + template.HTMLEscapeString(icon) + `</span>`)
+	},
+	"navText": func(lang, key string) template.HTML {
+		_, text := splitNavLabel(tr(lang, key))
+		if text == "" {
+			return ""
+		}
+		return template.HTML(`<span class="nav-text sidebar-label">` + template.HTMLEscapeString(text) + `</span>`)
+	},
 	"typeColor": func(t string) string {
 		switch strings.ToLower(t) {
 		case "public":
@@ -60,11 +155,38 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     /* sidebar */
     .sidebar {
       width: 230px; min-width: 230px; background: var(--card); border-right: 1px solid var(--line);
-      display: flex; flex-direction: column; transition: transform .25s;
-      position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+      display: flex; flex-direction: column; transition: width .2s, min-width .2s;
+      position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; overflow: hidden;
     }
-    .sidebar.collapsed { transform: translateX(-100%); }
+    /* Collapsed: shrink to an icon rail rather than sliding off-screen, so the
+       navigation stays one click away instead of requiring the ☰ button. */
+    .sidebar.collapsed { width: 64px; min-width: 64px; }
+    /* Everything except the icon itself is hidden in the rail. Text nodes are
+       rendered by the templates as bare strings next to the emoji, so the whole
+       label is wrapped in a span to have something to hide. */
+    .sidebar.collapsed .sidebar-label,
+    .sidebar.collapsed .sidebar-search,
+    .sidebar.collapsed .sidebar-nav a .nav-text,
+    .sidebar.collapsed .sidebar-footer .logout-text .nav-text { display: none; }
+    .sidebar.collapsed .sidebar-logo { padding: 16px 0 4px; justify-content: center; }
+    .sidebar.collapsed .sidebar-nav a {
+      justify-content: center; padding: 11px 0; gap: 0; border-left-width: 3px;
+    }
+    /* The emoji is the icon in the rail, so give it a consistent size and a
+       hit area wide enough to hover (the label is hidden, leaving only the
+       native title tooltip as the affordance). */
+    .sidebar.collapsed .sidebar-nav a .nav-icon {
+      display: block; width: 100%; text-align: center; font-size: 18px; line-height: 1;
+    }
+    .sidebar.collapsed .sidebar-footer { justify-content: center; padding: 12px 0; }
+    .sidebar.collapsed .sidebar-footer .logout-text { font-size: 15px; padding: 4px; }
     .sidebar-logo { padding: 16px 16px 4px; font-size: 20px; font-weight: 700; color: var(--accent); }
+    /* The rail swaps the language select for a single toggle button. */
+    .lang-toggle { display: none; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+      padding: 3px 6px; font-size: 10px; font-weight: 700; color: var(--muted); cursor: pointer; margin: 0; }
+    .lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
+    .sidebar.collapsed .lang-select { display: none; }
+    .sidebar.collapsed .lang-toggle { display: block; }
     .sidebar-subtitle { padding: 0 16px 8px; font-size: 11px; color: var(--muted); }
     .sidebar-search { padding: 10px 14px; }
     .sidebar-search input {
@@ -91,8 +213,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     /* main area */
-    .main { flex: 1; margin-left: 220px; padding: 24px 24px 40px; transition: margin-left .25s; min-width: 0; }
-    .main.expanded { margin-left: 0; }
+    .main { flex: 1; margin-left: 230px; padding: 24px 24px 40px; transition: margin-left .2s; min-width: 0; }
+    /* The rail is 64px wide, so the content sits beside it rather than under it. */
+    .main.expanded { margin-left: 64px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
     .card {
       background: var(--card);
@@ -242,12 +365,41 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       var m=document.getElementById('search-modal');
       if(m)m.classList.remove('active');
     }
-    function toggleSidebar(){
+    // The sidebar starts collapsed as an icon rail. The choice is remembered so
+    // navigating between pages does not keep re-expanding it.
+    function applySidebarState(collapsed){
       var sb=document.getElementById('sidebar');
       var mn=document.getElementById('main');
-      if(sb){sb.classList.toggle('collapsed');}
-      if(mn){mn.classList.toggle('expanded');}
+      if(sb){ sb.classList.toggle('collapsed',collapsed); }
+      if(mn){ mn.classList.toggle('expanded',collapsed); }
     }
+    function toggleSidebar(){
+      var sb=document.getElementById('sidebar');
+      var isRailed=sb?sb.classList.contains('collapsed'):true;
+      var next=!isRailed; // expand if railed, rail if expanded
+      applySidebarState(next);
+      try{ localStorage.setItem('sidebar-railed',next?'1':'0'); }catch(e){}
+    }
+    (function(){
+      // This runs from <head>, before #sidebar exists, so the DOM has to be
+      // ready first: calling getElementById here would return null and the saved
+      // state would never be applied.
+      function restore(){
+        var railed=true;
+        try{
+          var v=localStorage.getItem('sidebar-railed');
+          // Default to the rail: it keeps every destination visible without
+          // taking 230px of a narrow screen.
+          if(v==='0')railed=false;
+        }catch(e){}
+        applySidebarState(railed);
+      }
+      if(document.readyState==='loading'){
+        document.addEventListener('DOMContentLoaded',restore);
+      }else{
+        restore();
+      }
+    })();
     async function restartServer(){
       if(!(await confirmAsync('{{index .T "confirm_restart"}}')))return;
       try{
@@ -266,29 +418,34 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
   <!-- left sidebar -->
   <div class="sidebar collapsed" id="sidebar">
     <div class="sidebar-logo" style="display:flex;align-items:center;justify-content:space-between;">
-      <span>pan-fetcher</span>
-      <select onchange="switchLang(this.value)" style="width:auto;font-size:11px;padding:2px 4px;margin:0;border:1px solid var(--line);border-radius:4px;background:var(--bg);">
+      <span class="sidebar-label">pan-fetcher</span>
+      <!-- Full select when expanded; in the rail it collapses to a single
+           toggle button, because a select is too wide for 64px. -->
+      <select class="lang-select" onchange="switchLang(this.value)" style="width:auto;font-size:11px;padding:2px 4px;margin:0;border:1px solid var(--line);border-radius:4px;background:var(--bg);">
         <option value="zh"{{if eq .Lang "zh"}} selected{{end}}>CN</option>
         <option value="en"{{if eq .Lang "en"}} selected{{end}}>EN</option>
       </select>
+      <button class="lang-toggle" type="button" onclick="switchLang('{{if eq .Lang "zh"}}en{{else}}zh{{end}}')"
+        title="{{if eq .Lang "zh"}}Switch to English{{else}}切换到中文{{end}}"
+        >{{if eq .Lang "zh"}}CN{{else}}EN{{end}}</button>
     </div>
     <div class="sidebar-search">
       <input type="text" id="quick-search-input" placeholder="搜索电影、剧集..." value="" autocomplete="off" onfocus="location.href='/discover';this.blur()">
       <div class="sidebar-search-hint">🎬 TMDB 发现</div>
     </div>
     <div class="sidebar-nav">
-      <a href="/"{{if or (eq .Page "home") (eq .Page "")}} class="active"{{end}}>{{index .T "dashboard"}}</a>
-      <a href="/tasks"{{if eq .Page "tasks"}} class="active"{{end}}>{{index .T "home"}}</a>
-      <a href="/search"{{if eq .Page "search"}} class="active"{{end}}>{{index .T "indexer_search"}}</a>
-      <a href="/indexers"{{if eq .Page "indexers"}} class="active"{{end}}>{{index .T "indexers"}}</a>
-      <a href="/fs"{{if eq .Page "fs"}} class="active"{{end}}>{{index .T "files"}}</a>
-      <a href="/subs"{{if eq .Page "subs"}} class="active"{{end}}>{{index .T "subs"}}</a>
-      <a href="/log"{{if eq .Page "log"}} class="active"{{end}}>{{index .T "runtime_log"}}</a>
-      <a href="/settings"{{if eq .Page "settings"}} class="active"{{end}}>{{index .T "settings"}}</a>
+      <a href="/"{{if or (eq .Page "home") (eq .Page "")}} class="active"{{end}} title="{{index .T "dashboard"}}">{{navIcon $.Lang "dashboard"}}{{navText $.Lang "dashboard"}}</a>
+      <a href="/tasks"{{if eq .Page "tasks"}} class="active"{{end}} title="{{index .T "home"}}">{{navIcon $.Lang "home"}}{{navText $.Lang "home"}}</a>
+      <a href="/search"{{if eq .Page "search"}} class="active"{{end}} title="{{index .T "indexer_search"}}">{{navIcon $.Lang "indexer_search"}}{{navText $.Lang "indexer_search"}}</a>
+      <a href="/indexers"{{if eq .Page "indexers"}} class="active"{{end}} title="{{index .T "indexers"}}">{{navIcon $.Lang "indexers"}}{{navText $.Lang "indexers"}}</a>
+      <a href="/fs"{{if eq .Page "fs"}} class="active"{{end}} title="{{index .T "files"}}">{{navIcon $.Lang "files"}}{{navText $.Lang "files"}}</a>
+      <a href="/subs"{{if eq .Page "subs"}} class="active"{{end}} title="{{index .T "subs"}}">{{navIcon $.Lang "subs"}}{{navText $.Lang "subs"}}</a>
+      <a href="/log"{{if eq .Page "log"}} class="active"{{end}} title="{{index .T "runtime_log"}}">{{navIcon $.Lang "runtime_log"}}{{navText $.Lang "runtime_log"}}</a>
+      <a href="/settings"{{if eq .Page "settings"}} class="active"{{end}} title="{{index .T "settings"}}">{{navIcon $.Lang "settings"}}{{navText $.Lang "settings"}}</a>
     </div>
     <div class="sidebar-footer">
-      <a href="/logout" class="logout-text">{{index .T "logout"}}</a>
-      <a href="/about" class="logout-text">{{index .T "about"}}</a>
+      <a href="/logout" class="logout-text" title="{{index .T "logout"}}">{{navIcon $.Lang "logout"}}{{navText $.Lang "logout"}}</a>
+      <a href="/about" class="logout-text" title="{{index .T "about"}}">{{navIcon $.Lang "about"}}{{navText $.Lang "about"}}</a>
     </div>
   </div>
 
