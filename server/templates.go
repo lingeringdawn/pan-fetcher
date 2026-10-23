@@ -7,17 +7,13 @@ import (
 )
 
 
-// splitNavLabel separates a navigation label into its leading icon and the
-// remaining text.
+// splitNavLabel separates a label into a leading icon and the remaining text.
 //
-// Labels are stored in i18n as "<emoji> text" (for example "📊 仪表盘"). The
-// collapsed sidebar shows only the icon, so the two parts have to be separable
-// at render time.
-//
-// The icon is a leading run of characters that are icon-like rather than a
-// word: symbols, and the code points emoji are built from. A label with no icon
-// returns an empty icon and the whole label as text, so a plain label still
-// renders correctly rather than disappearing.
+// The i18n strings no longer carry an emoji — the icon set is drawn by the
+// templates — so in practice this now returns an empty icon and the whole label.
+// It is kept because it is the single place that knows how a label is split, and
+// because a label written by hand (or restored from an older build) may still
+// start with one; the split keeps that from leaking into the monochrome UI.
 func splitNavLabel(label string) (icon, text string) {
 	label = strings.TrimSpace(label)
 	if label == "" {
@@ -101,6 +97,29 @@ var navIconSVG = map[string]string{
 	"logout":    `<path d="M15 4.5h3.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H15"/><path d="M10 8.5 6.5 12 10 15.5"/><path d="M6.5 12h8"/>`,
 	"about":     `<circle cx="12" cy="12" r="8.5"/><path d="M12 11v6"/><circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>`,
 	"menu":      `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
+
+	// Interface icons used outside the sidebar. Same 24x24 grid and stroke
+	// weight as the navigation set, so the whole panel reads as one family.
+	"tmdb":       `<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M8 6v3"/><path d="M16 6v3"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 16h2"/><path d="M14 16h2"/>`,
+	"tv":         `<rect x="3" y="7.5" width="18" height="12" rx="2"/><path d="m8 3.5 4 4 4-4"/>`,
+	"download":   `<path d="M12 4v10"/><path d="m7.5 10 4.5 4.5L16.5 10"/><path d="M4 19h16"/>`,
+	"play":       `<path d="M7.5 5.5v13l11-6.5-11-6.5Z"/>`,
+	"edit":       `<path d="M4 20h4L20 8l-4-4L4 16v4Z"/><path d="m14.5 5.5 4 4"/>`,
+	"copy":       `<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-3a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"/>`,
+	"close":      `<path d="m6 6 12 12"/><path d="m18 6-12 12"/>`,
+	"warning":    `<path d="M12 4.5 21 19.5H3L12 4.5Z"/><path d="M12 10v4"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>`,
+	"lock":       `<rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
+	"loading":    `<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/>`,
+	"link":       `<path d="M10 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7L11.5 6"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 0 0 5.7 5.7L12.5 18"/>`,
+	"user":       `<circle cx="12" cy="8.5" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>`,
+	"external":   `<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>`,
+	"bell":       `<path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5h-15S6 13 6 9Z"/><path d="M10 18a2 2 0 0 0 4 0"/>`,
+	"settings2":  `<path d="M4 7h10"/><circle cx="17" cy="7" r="2.5"/><path d="M20 17H10"/><circle cx="7" cy="17" r="2.5"/>`,
+	"book":       `<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5v-13Z"/>`,
+	"film":       `<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7.5 4.5v15"/><path d="M16.5 4.5v15"/><path d="M3 9.5h4.5M16.5 9.5H21"/><path d="M3 14.5h4.5M16.5 14.5H21"/>`,
+	"plus":       `<path d="M12 5v14"/><path d="M5 12h14"/>`,
+	"check":      `<path d="m5 12.5 4.5 4.5L19 6.5"/>`,
+	"refresh":    `<path d="M20 11a8 8 0 1 0-.7 4.5"/><path d="M20 4.5V11h-6.5"/>`,
 }
 
 // iconSVG renders one of navIconSVG on the shared 24x24 grid.
@@ -166,6 +185,33 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 	},
 	// svgIcon exposes the table to the collapse button and other chrome.
 	"svgIcon": iconSVG,
+	// icoSpin renders the loading icon, spinning.
+	//
+	// It replaces the hourglass glyph the templates used to scatter around, so
+	// every loading state looks the same and matches the icon family.
+	"icoSpin": func() template.HTML {
+		return template.HTML(`<svg class="ico ico-inline ico-spin" viewBox="0 0 24 24" fill="none" ` +
+			`stroke="currentColor" stroke-width="1.75" stroke-linecap="round" ` +
+			`aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/></svg>`)
+	},
+	// ico renders an icon inline inside text, sized to the current font.
+	//
+	// It exists for the places that used to hold a single emoji in a sentence
+	// (a legend, a status line, a button label). Passing "" is allowed and
+	// renders nothing, so a template branch can skip the icon without a
+	// separate condition.
+	"ico": func(key string) template.HTML {
+		if key == "" {
+			return ""
+		}
+		body, ok := navIconSVG[key]
+		if !ok {
+			return ""
+		}
+		return template.HTML(`<svg class="ico ico-inline" viewBox="0 0 24 24" fill="none" ` +
+			`stroke="currentColor" stroke-width="1.75" stroke-linecap="round" ` +
+			`stroke-linejoin="round" aria-hidden="true">` + body + `</svg>`)
+	},
 	"typeColor": func(t string) string {
 		switch strings.ToLower(t) {
 		case "public":
@@ -225,21 +271,25 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
        navigation stays one click away. */
     .sidebar.collapsed { width: 64px; min-width: 64px; }
     /* Everything except the icons is hidden in the rail. Each label is wrapped
-       so there is a single selector to switch off. */
+       so there is a single selector to switch off.
+       The search box goes too: at 64px it has no room, and leaving it in would
+       wrap its placeholder onto several lines, push the nav down, and shift the
+       header button vertically between states. */
     .sidebar.collapsed .sidebar-label,
-    .sidebar.collapsed .sidebar-nav a .nav-text { display: none; }
+    .sidebar.collapsed .sidebar-nav a .nav-text,
+    .sidebar.collapsed .sidebar-search { display: none; }
 
     /* Header: button | title | language.
-       The button keeps its exact position and size in both states — collapsing
-       only hides the title and swaps the language control. The left padding is
-       deliberately identical in both states so the collapse target never moves
-       under the pointer; in the rail that leaves the button slightly left of
-       centre, which is the tradeoff for it staying still. */
+       Both states use identical padding, so the button keeps its exact position
+       on both axes — collapsing hides the title and the language control, which
+       must not change the row's height. A fixed height guarantees that: the
+       button is 28px and the padding adds 24px above and below, so the row is
+       the same whether the select (about 22px) or nothing sits beside it. */
     .sidebar-head {
       display: flex; align-items: center; gap: 8px;
-      padding: 14px 12px 10px;
+      height: 52px; padding: 0 12px;
     }
-    .sidebar.collapsed .sidebar-head { padding: 14px 12px 10px; gap: 0; }
+    .sidebar.collapsed .sidebar-head { padding: 0 12px; gap: 0; }
     .sidebar-title { font-size: 17px; font-weight: 700; color: var(--accent); white-space: nowrap; }
     .sidebar-toggle-btn {
       flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
@@ -263,6 +313,16 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
        all drawn on the same 24x24 grid with currentColor strokes. */
     .ico { width: 18px; height: 18px; flex: 0 0 auto; display: block; }
     .sidebar-toggle-btn .ico { width: 17px; height: 17px; }
+    /* Inline variant: follows the surrounding text size and baseline, for icons
+       that sit inside a sentence, a legend or a button label. */
+    .ico-inline {
+      width: 1.05em; height: 1.05em; display: inline-block;
+      vertical-align: -0.16em; margin-right: .35em;
+    }
+    /* A spinning icon doubles as the loading state, so "loading" reads the same
+       everywhere instead of relying on a text glyph. */
+    .ico-spin { animation: ico-spin 1s linear infinite; }
+    @keyframes ico-spin { to { transform: rotate(360deg); } }
 
     .sidebar-subtitle { padding: 0 16px 8px; font-size: 11px; color: var(--muted); }
     .sidebar-search { padding: 10px 14px; }
@@ -417,6 +477,28 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     .smodal-card h2 { margin-top: 0; }
   </style>
   <script>
+    // ICO returns the markup for an icon so JavaScript-built HTML uses the same
+    // icon set as the templates.
+    //
+    // Rows and modals are assembled as strings at runtime, where a template
+    // helper is unavailable; without this they would keep the emoji the rest of
+    // the panel has moved away from.
+    var _icoPaths={
+      play:'<path d="M7.5 5.5v13l11-6.5-11-6.5Z"/>',
+      files:'<path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+      warning:'<path d="M12 4.5 21 19.5H3L12 4.5Z"/><path d="M12 10v4"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>',
+      film:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7.5 4.5v15"/><path d="M16.5 4.5v15"/><path d="M3 9.5h4.5M16.5 9.5H21"/><path d="M3 14.5h4.5M16.5 14.5H21"/>',
+      tv:'<rect x="3" y="7.5" width="18" height="12" rx="2"/><path d="m8 3.5 4 4 4-4"/>',
+      search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+      loading:'<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/>'
+    };
+    function ICO(name,spin){
+      var p=_icoPaths[name];
+      if(!p)return '';
+      return '<svg class="ico'+(spin?' ico-inline ico-spin':'')+'" viewBox="0 0 24 24" fill="none" '+
+        'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" '+
+        'stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
+    }
     var modalCb=null;
     function showModal(title,body,buttons){
       document.getElementById('g-modal-title').textContent=title;
@@ -513,7 +595,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     </div>
     <div class="sidebar-search">
       <input type="text" id="quick-search-input" placeholder="搜索电影、剧集..." value="" autocomplete="off" onfocus="location.href='/discover';this.blur()">
-      <div class="sidebar-search-hint">🎬 TMDB 发现</div>
+      <div class="sidebar-search-hint">{{ico "tmdb"}}TMDB 发现</div>
     </div>
     <div class="sidebar-nav">
       <a href="/"{{if or (eq .Page "home") (eq .Page "")}} class="active"{{end}} title="{{navTitle $.Lang "dashboard"}}">{{navIcon "dashboard"}}{{navText $.Lang "dashboard"}}</a>
@@ -565,14 +647,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <div>
           <span style="font-size:13px;color:var(--muted);">{{index .T "uptime_label"}}: </span>
           <strong>{{.DashStats.Uptime}}</strong>
-          {{if .HasAgent}}<span style="margin-left:12px;font-size:13px;color:var(--accent-2);">✓ 115 {{index .T "status_connected"}}</span>{{end}}
-          <span style="margin-left:12px;font-size:13px;{{if .HasPassword}}color:var(--accent-2);{{else}}color:var(--warn);{{end}}">{{if .HasPassword}}🔒 {{index .T "pw_set"}}{{else}}⚠ {{index .T "pw_not_set"}}{{end}}</span>
+          {{if .HasAgent}}<span style="margin-left:12px;font-size:13px;color:var(--accent-2);">{{ico "check"}}115 {{index .T "status_connected"}}</span>{{end}}
+          <span style="margin-left:12px;font-size:13px;{{if .HasPassword}}color:var(--accent-2);{{else}}color:var(--warn);{{end}}">{{if .HasPassword}}{{ico "lock"}}{{index .T "pw_set"}}{{else}}{{ico "warning"}}{{index .T "pw_not_set"}}{{end}}</span>
         </div>
       </div>
     </div>
     {{if .DashStats.RecentItems}}
     <div class="card panel" style="margin-top:16px;">
-      <h3 style="margin:0 0 10px;">🆕 最近新增资源</h3>
+      <h3 style="margin:0 0 10px;">{{ico "plus"}}最近新增资源</h3>
       <div style="max-height:300px;overflow-y:auto;">
         {{range .DashStats.RecentItems}}
         <div style="padding:6px 0;border-bottom:1px solid var(--line);">
@@ -618,7 +700,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         {{range .FSCrumbs}}<a class="crumb" href="/fs?dir={{.ID}}">{{if eq .ID "0"}}{{index $.T "root_dir"}}{{else}}{{.Name}}{{end}}</a><span class="crumb-sep">/</span>{{end}}
       </div>
       <div style="margin-bottom:10px;">
-        <button onclick="fsNewFolder('{{.FSCurrentID}}')" style="padding:4px 12px;font-size:12px;">📁 {{index .T "new_folder"}}</button>
+        <button onclick="fsNewFolder('{{.FSCurrentID}}')" style="padding:4px 12px;font-size:12px;">{{ico "files"}}{{index .T "new_folder"}}</button>
       </div>
       {{if .FSEntries}}
       <table class="tbl fs-tbl">
@@ -631,10 +713,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           <td class="muted">{{.Size}}</td>
           <td class="muted mono">{{.ID}}</td>
           <td style="white-space:nowrap;">
-            <button onclick="fsRename('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "rename"}}">✎</button>
+            <button onclick="fsRename('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "rename"}}">{{ico "edit"}}</button>
             <button onclick="fsMove('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "move"}}">↗</button>
-            <button onclick="fsCopy('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "copy"}}">📋</button>
-            <button onclick="fsDelete('{{.ID}}','{{.Name}}')" style="background:var(--danger);padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "delete"}}">✕</button>
+            <button onclick="fsCopy('{{.ID}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "copy"}}">{{ico "copy"}}</button>
+            <button onclick="fsDelete('{{.ID}}','{{.Name}}')" style="background:var(--danger);padding:2px 6px;font-size:11px;margin:0;" title="{{index $.T "delete"}}">{{ico "close"}}</button>
           </td>
         </tr>{{end}}
         </tbody>
@@ -674,7 +756,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             </form>
           </td>
           <td>
-            {{if gt .CacheCount 0}}<span style="cursor:pointer;user-select:none;font-size:12px;" onclick="toggleSubCache('{{.Name}}',this)">▶ </span>{{end}}
+            {{if gt .CacheCount 0}}<span style="cursor:pointer;user-select:none;font-size:12px;" onclick="toggleSubCache('{{.Name}}',this)">{{ico "play"}}</span>{{end}}
             <span style="font-size:12px;color:var(--muted);">{{.CacheCount}} {{index $.T "items"}}</span>
             {{if gt .CacheCount 0}}
             <form action="/dedup/clear" method="post" style="display:inline;">
@@ -684,13 +766,13 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             {{end}}
           </td>
           <td style="white-space:nowrap;">
-            <button onclick="runSub(this,'{{.URL}}','{{.Cid}}','{{.SavePath}}','{{.Filter}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--accent);" title="立即执行">▶</button>
-            <button onclick="editSubInline(this)" style="padding:2px 6px;font-size:11px;margin:0;">✎</button>
+            <button onclick="runSub(this,'{{.URL}}','{{.Cid}}','{{.SavePath}}','{{.Filter}}','{{.Name}}')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--accent);" title="立即执行">{{ico "play"}}</button>
+            <button onclick="editSubInline(this)" style="padding:2px 6px;font-size:11px;margin:0;">{{ico "edit"}}</button>
             <form action="/subs" method="post" style="display:inline;">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="site" value="{{.Site}}">
               <input type="hidden" name="name" value="{{.Name}}">
-              <button type="submit" style="background:var(--danger);padding:2px 8px;font-size:11px;margin:0;" onclick="submitConfirm(this.form,'{{index $.T "confirm_delete_sub"}}')">✕</button>
+              <button type="submit" style="background:var(--danger);padding:2px 8px;font-size:11px;margin:0;" onclick="submitConfirm(this.form,'{{index $.T "confirm_delete_sub"}}')">{{ico "close"}}</button>
             </form>
           </td>
         </tr>
@@ -751,7 +833,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               alertModal(j.msg||'Error');
             }
           }catch(e){alertModal(e.message);}
-          btn.textContent='▶'; btn.disabled=false;
+        btn.innerHTML=ICO('play'); btn.disabled=false;
         }
         var subCacheData={};
         async function toggleSubCache(subKey,el){
@@ -775,7 +857,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
                 html+='<tr style="border-bottom:1px solid #e8ecf1;">';
                 html+='<td style="padding:3px 6px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;" title="'+(it.hash||'')+'">'+display+'</td>';
                 html+='<td style="padding:3px 6px;text-align:right;">';
-                html+='<button data-hash="'+it.hash+'" data-sub="'+subKey.replace(/"/g,'&quot;')+'" onclick="removeCacheHash(this)" style="padding:1px 6px;font-size:10px;margin:0;background:var(--danger);">✕</button>';
+                html+='<button data-hash="'+it.hash+'" data-sub="'+subKey.replace(/"/g,'&quot;')+'" onclick="removeCacheHash(this)" style="padding:1px 6px;font-size:10px;margin:0;background:var(--danger);">{{ico "close"}}</button>';
                 html+='</td></tr>';
               });
               html+='</table>';
@@ -787,7 +869,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             }
           }else{
             row.style.display='none';
-            el.textContent='▶ ';
+            el.innerHTML=ICO('play');
           }
         }
         async function removeCacheHash(btn){
@@ -872,7 +954,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           <td title="{{.InfoHash}}">{{.Name}}</td>
           <td>{{.Size}}</td>
           <td>{{printf "%.0f" .Percent}}%</td>
-          <td><button onclick="copyTaskURL('{{.URL}}')" style="padding:2px 6px;font-size:10px;margin:0;" title="{{index $.T "copy_link_title"}}">📋</button></td>
+          <td><button onclick="copyTaskURL('{{.URL}}')" style="padding:2px 6px;font-size:10px;margin:0;" title="{{index $.T "copy_link_title"}}">{{ico "copy"}}</button></td>
         </tr>{{end}}{{else}}<tr><td colspan="4" class="hint" id="task-empty-hint">{{index .T "no_tasks"}}</td></tr>{{end}}
         </tbody>
       </table>
@@ -924,7 +1006,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               '<td title="'+t.info_hash+'">'+t.name+'</td>'+
               '<td>'+t.size+'</td>'+
               '<td>'+t.percent.toFixed(0)+'%</td>'+
-              '<td><button onclick="copyTaskURL(\''+t.url+'\')" style="padding:2px 6px;font-size:10px;margin:0;" title="'+'{{index .T "copy_link_title"}}'+'">📋</button></td>'+
+              '<td><button onclick="copyTaskURL(\''+t.url+'\')" style="padding:2px 6px;font-size:10px;margin:0;" title="'+'{{index .T "copy_link_title"}}'+'">'+ICO('copy')+'</button></td>'+
               '</tr>';
           }).join('');
           // Re-count
@@ -1046,9 +1128,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div id="pagination-bar" style="display:flex;justify-content:center;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap;"></div>
       </div>
       {{else}}{{if .SearchQuery}}<div class="hint" style="margin-top:12px;">{{index .T "search_no_result"}}</div>{{end}}{{end}}
-      {{if .SearchErrors}}{{range $id, $err := .SearchErrors}}<div style="padding:4px 8px;margin:2px 0;background:#fef2f2;color:#991b1b;border-radius:6px;word-break:break-all;">⚠ {{$err}}</div>{{end}}{{end}}
+      {{if .SearchErrors}}{{range $id, $err := .SearchErrors}}<div style="padding:4px 8px;margin:2px 0;background:#fef2f2;color:#991b1b;border-radius:6px;word-break:break-all;">{{ico "warning"}}{{$err}}</div>{{end}}{{end}}
       <!-- saved searches -->
-      {{if .SavedSearches}}<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line);"><h3 style="margin:0 0 8px;">{{index .T "saved_searches_title"}}</h3>{{range .SavedSearches}}<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;"><span style="flex:1;">🔍 {{.Query}}</span><form action="/search" method="post" style="display:inline;"><input type="hidden" name="q" value="{{.Query}}"><input type="hidden" name="sort" value="{{.Sort}}"><button type="submit" style="padding:2px 8px;font-size:11px;margin:0;">{{index $.T "search_btn_sm"}}</button></form><form action="/search" method="post" style="display:inline;"><input type="hidden" name="action" value="unsubscribe"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" style="padding:2px 8px;font-size:11px;margin:0;background:var(--danger);">{{index $.T "delete_btn"}}</button></form></div>{{end}}</div>{{end}}
+      {{if .SavedSearches}}<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line);"><h3 style="margin:0 0 8px;">{{index .T "saved_searches_title"}}</h3>{{range .SavedSearches}}<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;"><span style="flex:1;">{{ico "search"}}{{.Query}}</span><form action="/search" method="post" style="display:inline;"><input type="hidden" name="q" value="{{.Query}}"><input type="hidden" name="sort" value="{{.Sort}}"><button type="submit" style="padding:2px 8px;font-size:11px;margin:0;">{{index $.T "search_btn_sm"}}</button></form><form action="/search" method="post" style="display:inline;"><input type="hidden" name="action" value="unsubscribe"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" style="padding:2px 8px;font-size:11px;margin:0;background:var(--danger);">{{index $.T "delete_btn"}}</button></form></div>{{end}}</div>{{end}}
     </div>
     <script>
     document.getElementById('search-form').addEventListener('submit',function(e){
@@ -1138,15 +1220,15 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     function classifyTag(tag){
       var t=tag.toLowerCase();
       if(/^\d+\(\d+\)$/.test(tag)||/^\d{1,4}$/.test(tag)||/^(vol|volume|disc|cd|part|pt)[\s.]*\d+$/i.test(t))return null;
-      if(/^s\d{2}$/.test(t))return{cat:'season',label:'📅 季'};
-      if(/^\d{3,4}[pi]$/.test(t)||/^4k$/i.test(t))return{cat:'resolution',label:'📐 分辨率'};
-      if(/^(x26[45]|hevc|avc|av1|vp\d|flac|aac|opus|ac3|ddp?|dts|truehd|pcm|alac)/i.test(t)||/^(hevc-10bit|avc\s*aac|flac\s*\d|aac\s*avc)/i.test(t))return{cat:'codec',label:'🎞 编码'};
-      if(/^(web-dl|webrip|bdrip|bd|dvdrip|hdtv|tvrip|bluray|remux)/i.test(t)||/^(viutv|baha|iqiyi|b-global|cr|netflix|amazon|hulu|disney|bahamut|aniplus|at-x)/i.test(t))return{cat:'source',label:'📡 来源'};
-      if(/^(mp4|mkv|avi|ts|m2ts)$/i.test(t))return{cat:'container',label:'📦 容器'};
-      if(/^(cht|chs|jpn|eng|kor|繁|简|日|英|中|外挂|内封|内嵌|字幕)/i.test(t)||/^(简繁|繁简|繁体|简体|中文|日语|英语|韩语)/.test(tag))return{cat:'language',label:'🌐 语言'};
+      if(/^s\d{2}$/.test(t))return{cat:'season',label:'季'};
+      if(/^\d{3,4}[pi]$/.test(t)||/^4k$/i.test(t))return{cat:'resolution',label:'分辨率'};
+      if(/^(x26[45]|hevc|avc|av1|vp\d|flac|aac|opus|ac3|ddp?|dts|truehd|pcm|alac)/i.test(t)||/^(hevc-10bit|avc\s*aac|flac\s*\d|aac\s*avc)/i.test(t))return{cat:'codec',label:'编码'};
+      if(/^(web-dl|webrip|bdrip|bd|dvdrip|hdtv|tvrip|bluray|remux)/i.test(t)||/^(viutv|baha|iqiyi|b-global|cr|netflix|amazon|hulu|disney|bahamut|aniplus|at-x)/i.test(t))return{cat:'source',label:'来源'};
+      if(/^(mp4|mkv|avi|ts|m2ts)$/i.test(t))return{cat:'container',label:'容器'};
+      if(/^(cht|chs|jpn|eng|kor|繁|简|日|英|中|外挂|内封|内嵌|字幕)/i.test(t)||/^(简繁|繁简|繁体|简体|中文|日语|英语|韩语)/.test(tag))return{cat:'language',label:'语言'};
       // Group: only from server-validated data-group
-      if(window._serverGroups&&window._serverGroups[tag])return{cat:'group',label:'👥 字幕组'};
-      return{cat:'other',label:'🏷 其他'};
+      if(window._serverGroups&&window._serverGroups[tag])return{cat:'group',label:'字幕组'};
+      return{cat:'other',label:'其他'};
     }
     function tagRowsWithGroup(table){
       if(!table)return[];var rows=table.querySelectorAll('tbody tr');if(!rows.length)return[];var groups=[],seen={};
@@ -1205,7 +1287,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       rss.onclick=function(){var sf=document.getElementById('sub-form');if(sf){var q=rssQuery||'';document.getElementById('sub-query').value=q;document.getElementById('sub-name').value=q;var u='/rss/search?q='+encodeURIComponent(q);var form=document.getElementById('search-form');if(form){var fd=new FormData(form);var s=fd.get('sort');if(s)u+='&sort='+encodeURIComponent(s);var idx=fd.getAll('indexer');if(idx.length)u+='&indexers='+encodeURIComponent(idx.join(','));}var fl=buildGroupKeyword();if(fl)u+='&keyword='+encodeURIComponent(fl);document.getElementById('sub-url').value=u;sf.style.display='flex';}};
       top.appendChild(rss);bar.appendChild(top);
       var cats={},co=[],cl={group:'{{index .T "chip_group"}}',source:'{{index .T "chip_source"}}',codec:'{{index .T "chip_codec"}}',resolution:'{{index .T "chip_resolution"}}',language:'{{index .T "chip_language"}}',container:'{{index .T "chip_container"}}',season:'{{index .T "chip_season"}}',other:'{{index .T "chip_other"}}'};
-      groups.forEach(function(g){var ck;if(catMap&&catMap[g])ck=catMap[g];else{var cl2=classifyTag(g);if(!cl2)return;ck=cl2.cat;}if(!cats[ck]){cats[ck]={label:cl[ck]||('🏷 '+ck),tags:[],key:ck};co.push(ck);}cats[ck].tags.push(g);});
+      groups.forEach(function(g){var ck;if(catMap&&catMap[g])ck=catMap[g];else{var cl2=classifyTag(g);if(!cl2)return;ck=cl2.cat;}if(!cats[ck]){cats[ck]={label:cl[ck]||ck,tags:[],key:ck};co.push(ck);}cats[ck].tags.push(g);});
       co.forEach(function(ck){var cat=cats[ck];var row=document.createElement('div');row.style.cssText='display:flex;flex-wrap:wrap;gap:4px;align-items:center;';var lbl=document.createElement('span');lbl.textContent=cat.label;lbl.style.cssText='font-size:10px;color:var(--muted);margin-right:2px;white-space:nowrap;opacity:0.7;cursor:pointer;';row.appendChild(lbl);var isCollapsed=ck!=='group';var cwrap=null;if(isCollapsed){cwrap=document.createElement('span');cwrap.style.cssText='display:none;';row.appendChild(cwrap);lbl.textContent=cat.label+'('+cat.tags.length+') ▸';lbl.onclick=function(){var s=cwrap.style.display==='none';cwrap.style.display=s?'':'none';lbl.textContent=cat.label+'('+cat.tags.length+') '+(s?'▾':'▸');};}cat.tags.forEach(function(g){var ia=akwSet.indexOf(g.toLowerCase())!==-1;var c=mkChip(g,g,ia);c.setAttribute('data-cat',ck);(isCollapsed&&cwrap?cwrap:row).appendChild(c);});bar.appendChild(row);});
       bar.addEventListener('click',function(e){if(e.target.id==='chip-rss-btn')return;if(e.target.tagName!=='SPAN')return;var f=e.target.getAttribute('data-filter');if(f===undefined||f===null)return;if(f===''){var ha=false;bar.querySelectorAll('span:not(#chip-rss-btn):not([data-filter=""])').forEach(function(c){if(c.style.background==='var(--accent)'||c.style.background==='rgb(59,130,246)')ha=true;});bar.querySelectorAll('span:not(#chip-rss-btn)').forEach(function(c){c.style.background='var(--bg)';c.style.color='';c.style.borderColor='var(--line)';});e.target.style.background='var(--accent)';e.target.style.color='#fff';e.target.style.borderColor='var(--accent)';updateRSSFilterTags([]);var ke2=document.getElementById('search-keyword');if(ke2)ke2.value='';}else{var ia=e.target.style.background==='var(--accent)'||e.target.style.background==='rgb(59,130,246)';if(ia){e.target.style.background='var(--bg)';e.target.style.color='';e.target.style.borderColor='var(--line)';}else{e.target.style.background='var(--accent)';e.target.style.color='#fff';e.target.style.borderColor='var(--accent)';}var ac=bar.querySelector('span[data-filter=""]');if(ac){ac.style.background='var(--bg)';ac.style.color='';ac.style.borderColor='var(--line)';}var act=[];bar.querySelectorAll('span:not(#chip-rss-btn):not([data-filter=""])').forEach(function(c){if(c.style.background==='var(--accent)'||c.style.background==='rgb(59,130,246)')act.push(c.getAttribute('data-filter'));});if(!act.length&&ac){ac.style.background='var(--accent)';ac.style.color='#fff';ac.style.borderColor='var(--accent)';}updateRSSFilterTags(act);var ke=document.getElementById('search-keyword');if(ke)ke.value=buildGroupKeyword();}});
       container.insertBefore(bar,table);
@@ -1287,7 +1369,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       @media(max-width:600px){.detail-body{flex-direction:column;align-items:center;margin-top:-40px;padding:0 16px 16px;}.detail-info-col{padding-top:10px;}.detail-poster-img{width:100px;height:150px;}.detail-backdrop-wrap{height:140px;}}
     </style>
     <div class="discover-hero">
-      <h2>🎬 发现</h2>
+      <h2>{{ico "tmdb"}}发现</h2>
       <p>搜索电影和剧集，找到你想要的资源</p>
     </div>
     <div class="discover-search">
@@ -1298,8 +1380,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
     <div id="step-tmdb" class="search-step active">
       <div class="search-tabs" id="tmdb-tabs" style="display:none;">
-        <div class="search-tab active" data-tab="movies" onclick="switchTMDTab('movies')">🎬 电影</div>
-        <div class="search-tab" data-tab="tv" onclick="switchTMDTab('tv')">📺 电视节目</div>
+        <div class="search-tab active" data-tab="movies" onclick="switchTMDTab('movies')">{{ico "film"}}电影</div>
+        <div class="search-tab" data-tab="tv" onclick="switchTMDTab('tv')">{{ico "tv"}}电视节目</div>
       </div>
       <div class="tmdb-grid" id="tmdb-grid"></div>
     </div>
@@ -1307,18 +1389,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     <!-- Trending section -->
     <div id="trending-section" style="margin-top:24px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-        <h3 style="margin:0;font-size:16px;">🔥 热门推荐</h3>
+        <h3 style="margin:0;font-size:16px;">{{ico "film"}}热门推荐</h3>
         <span style="font-size:11px;color:var(--muted);">本周流行</span>
       </div>
       <div class="search-tabs" style="margin-bottom:0;">
-        <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">🎬 热门电影</div>
-        <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">📺 热门剧集</div>
+        <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}热门电影</div>
+        <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}热门剧集</div>
       </div>
       <div class="tmdb-grid" id="trending-grid" style="min-height:120px;">
-        <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">⏳ 加载中...</div>
+        <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">{{icoSpin}}</div>
       </div>
       <div style="text-align:center;margin-top:14px;" id="trending-more-wrap">
-        <button id="btn-trending-more" onclick="loadMoreTrending()" style="padding:8px 28px;font-size:13px;border-radius:20px;background:var(--bg);border:1px solid var(--line);cursor:pointer;display:none;color:var(--accent);">📥 显示更多</button>
+        <button id="btn-trending-more" onclick="loadMoreTrending()" style="padding:8px 28px;font-size:13px;border-radius:20px;background:var(--bg);border:1px solid var(--line);cursor:pointer;display:none;color:var(--accent);">{{ico "download"}}显示更多</button>
       </div>
     </div>
 
@@ -1329,7 +1411,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       </div>
       <div style="margin-top:10px;font-size:13px;color:var(--muted);">选择季（可选，不选则搜索全部季）：</div>
       <div class="season-select" id="season-list"></div>
-      <button id="btn-confirm-tv" onclick="confirmTVSearch()" style="margin-top:14px;padding:10px 24px;font-size:14px;background:var(--accent);border-radius:10px;">🔍 搜索此剧集</button>
+      <button id="btn-confirm-tv" onclick="confirmTVSearch()" style="margin-top:14px;padding:10px 24px;font-size:14px;background:var(--accent);border-radius:10px;">{{ico "search"}}搜索此剧集</button>
     </div>
 
     <div id="step-confirm" class="search-step">
@@ -1339,8 +1421,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       </div>
       <div id="confirm-query" style="margin-top:10px;font-size:13px;color:var(--muted);"></div>
       <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
-        <button onclick="doAggregatedSearch()" style="padding:10px 24px;font-size:14px;background:var(--accent);border-radius:10px;">🚀 聚合搜索</button>
-        <button onclick="doAggregatedSearchRSS()" style="padding:10px 24px;font-size:14px;background:var(--accent-2);border-radius:10px;">📋 一键订阅</button>
+        <button onclick="doAggregatedSearch()" style="padding:10px 24px;font-size:14px;background:var(--accent);border-radius:10px;">{{ico "download"}}聚合搜索</button>
+        <button onclick="doAggregatedSearchRSS()" style="padding:10px 24px;font-size:14px;background:var(--accent-2);border-radius:10px;">{{ico "book"}}一键订阅</button>
       </div>
     </div>
 
@@ -1354,7 +1436,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <div class="detail-body">
           <div class="detail-poster-col">
             <img id="detail-poster" class="detail-poster-img" src="" alt="" onerror="this.style.display='none';document.getElementById('detail-poster-ph').style.display='flex';">
-            <div id="detail-poster-ph" class="detail-poster-placeholder" style="display:none;">🎬</div>
+        <div id="detail-poster-ph" class="detail-poster-placeholder" style="display:none;">{{ico "film"}}</div>
           </div>
           <div class="detail-info-col">
             <h2 id="detail-title"></h2>
@@ -1364,11 +1446,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             <div class="detail-genres" id="detail-genres"></div>
             <p class="detail-overview" id="detail-overview"></p>
             <div class="detail-season-wrap" id="detail-season-wrap" style="display:none;">
-              <label>📺 选择季：</label>
+              <label>{{ico "tv"}}选择季：</label>
               <div class="season-select" id="detail-season-list"></div>
             </div>
             <div class="detail-actions">
-              <button onclick="detailGetResources()" style="background:var(--accent);color:#fff;">🚀 获取资源</button>
+              <button onclick="detailGetResources()" style="background:var(--accent);color:#fff;">{{ico "download"}}获取资源</button>
             </div>
           </div>
         </div>
@@ -1388,7 +1470,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       try{
         var r=await fetch('/api/tmdb/search?q='+encodeURIComponent(q));
         var j=await r.json();
-        if(j.error){document.getElementById('tmdb-status').textContent='⚠ '+j.error;return;}
+        if(j.error){document.getElementById('tmdb-status').textContent='!'+j.error;return;}
         tmdbMovies=j.movies||[];tmdbTV=j.tv||[];
         var total=tmdbMovies.length+tmdbTV.length;
         document.getElementById('tmdb-status').textContent='找到 '+total+' 个结果（电影 '+tmdbMovies.length+'，电视 '+tmdbTV.length+'）';
@@ -1397,7 +1479,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         document.querySelectorAll('.search-tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===startTab);});
         renderTMDBCards(startTab);
         showStep('step-tmdb');
-      }catch(e){document.getElementById('tmdb-status').textContent='⚠ 请求失败: '+e.message;}
+      }catch(e){document.getElementById('tmdb-status').textContent='!'+'请求失败: '+e.message;}
     }
 
     function switchTMDTab(tab){
@@ -1411,8 +1493,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       if(!items.length){grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">无结果</div>';return;}
       grid.innerHTML=items.map(function(it){
         var posterHTML=it.poster
-          ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>🎬</div>\'">'
-          :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'🎬':'📺')+'</div>';
+          ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>\'+ICO("film")+\'</div>\'">'
+          :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'film':'tv')+'</div>';
         return '<div class="tmdb-card" onclick="selectTMDB(\''+it.media_type+'\','+it.id+')" data-type="'+it.media_type+'" data-id="'+it.id+'">'
           +'<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div>'
           +'<div class="tmdb-card-type">'+(it.media_type==='movie'?'电影':'剧集')+'</div>'
@@ -1478,7 +1560,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       var posterImg=document.getElementById('detail-poster');
       var posterPh=document.getElementById('detail-poster-ph');
       if(d.poster){posterImg.src=d.poster;posterImg.style.display='';posterPh.style.display='none';}
-      else{posterImg.style.display='none';posterPh.style.display='flex';posterPh.textContent=d.media_type==='movie'?'🎬':'📺';}
+      else{posterImg.style.display='none';posterPh.style.display='flex';posterPh.textContent=d.media_type==='movie'?'film':'tv';}
       document.getElementById('detail-title').textContent=d.title+' ('+d.year+')';
       var orig=document.getElementById('detail-orig');
       orig.textContent=d.original_title&&d.original_title!==d.title?d.original_title:'';
@@ -1490,10 +1572,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       var meta=[];
       if(d.vote_average>0)meta.push('⭐ '+d.vote_average.toFixed(1)+' ('+d.vote_count+'票)');
       if(d.media_type==='movie'&&d.runtime>0)meta.push('⏱ '+d.runtime+'分钟');
-      if(d.status)meta.push('📌 '+d.status);
+      if(d.status)meta.push(d.status);
       if(d.media_type==='tv'){
-        if(d.num_seasons>0)meta.push('📺 '+d.num_seasons+'季');
-        if(d.num_episodes>0)meta.push('🎞 '+d.num_episodes+'集');
+        if(d.num_seasons>0)meta.push(d.num_seasons+'季');
+        if(d.num_episodes>0)meta.push(d.num_episodes+'集');
       }
       document.getElementById('detail-meta').innerHTML=meta.map(function(m){return '<span>'+m+'</span>';}).join('');
       // Genres
@@ -1553,8 +1635,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       if(!items.length){grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">暂无数据</div>';document.getElementById('btn-trending-more').style.display='none';return;}
       grid.innerHTML=items.map(function(it){
         var posterHTML=it.poster
-          ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>🎬</div>\'">'
-          :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'🎬':'📺')+'</div>';
+          ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>\'+ICO("film")+\'</div>\'">'
+          :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'film':'tv')+'</div>';
         return '<div class="tmdb-card" onclick="selectTMDB(\''+it.media_type+'\','+it.id+')" data-type="'+it.media_type+'" data-id="'+it.id+'">'
           +'<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div>'
           +'<div class="tmdb-card-type">'+(it.media_type==='movie'?'电影':'剧集')+'</div>'
@@ -1567,14 +1649,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     }
     async function loadMoreTrending(){
       var btn=document.getElementById('btn-trending-more');
-      btn.textContent='⏳ 加载中...';btn.disabled=true;
+      btn.textContent='{{icoSpin}}';btn.disabled=true;
       trendingPage++;
       try{
         var r=await fetch('/api/tmdb/trending?page='+trendingPage);
         var j=await r.json();
-        if(j.error){btn.textContent='📥 显示更多';btn.disabled=false;return;}
+        if(j.error){btn.textContent='+more+';btn.disabled=false;return;}
         var newMovies=j.movies||[],newTV=j.tv||[];
-        if(!newMovies.length&&!newTV.length){btn.textContent='✓ 已全部加载';btn.disabled=true;return;}
+        if(!newMovies.length&&!newTV.length){btn.textContent='{{ico "check"}}已全部加载';btn.disabled=true;return;}
         var grid=document.getElementById('trending-grid');
         var frag=document.createDocumentFragment();
         var items=trendingTab==='movies'?newMovies:newTV;
@@ -1583,16 +1665,16 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           div.setAttribute('onclick',"selectTMDB('"+it.media_type+"',"+it.id+")");
           div.setAttribute('data-type',it.media_type);div.setAttribute('data-id',it.id);
           var posterHTML=it.poster
-            ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>🎬</div>\'">'
-            :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'🎬':'📺')+'</div>';
+            ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>\'+ICO("film")+\'</div>\'">'
+            :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'film':'tv')+'</div>';
           div.innerHTML='<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div><div class="tmdb-card-type">'+(it.media_type==='movie'?'电影':'剧集')+'</div>';
           frag.appendChild(div);
         });
         grid.appendChild(frag);
         trendingMovies=trendingMovies.concat(newMovies);
         trendingTV=trendingTV.concat(newTV);
-        btn.textContent='📥 显示更多';btn.disabled=false;
-      }catch(e){btn.textContent='📥 显示更多';btn.disabled=false;}
+        btn.textContent='+more+';btn.disabled=false;
+      }catch(e){btn.textContent='+more+';btn.disabled=false;}
     }
     loadTrending();
     var trendingObserver=new IntersectionObserver(function(entries){
@@ -1634,12 +1716,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
     <!-- author -->
     <div class="card panel" style="margin-top:12px;">
-      <h3 style="margin:0 0 8px;">👤 {{index .T "about_author_title"}}</h3>
+      <h3 style="margin:0 0 8px;">{{ico "user"}}{{index .T "about_author_title"}}</h3>
       <p style="font-size:13px;line-height:1.8;margin:0 0 10px;">{{index .T "about_author_desc"}}</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px;">
         <a href="https://www8ld.com/" target="_blank" rel="noopener"
            style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;">
-          🏠 {{index .T "about_author_site"}}
+          {{ico "external"}}{{index .T "about_author_site"}}
         </a>
         <a href="https://github.com/lingeringdawn" target="_blank" rel="noopener">GitHub</a>
       </div>
@@ -1647,7 +1729,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     </div>
 
     <div class="card panel" style="margin-top:12px;">
-      <h3 style="margin:0 0 8px;">🔗 {{index .T "about_links"}}</h3>
+      <h3 style="margin:0 0 8px;">{{ico "link"}}{{index .T "about_links"}}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;">
         <a href="https://github.com/lingeringdawn/pan-fetcher" target="_blank" rel="noopener">GitHub</a>
         <span style="color:var(--line);">|</span>
@@ -1791,7 +1873,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           if(j.entries.length===0)html+='<p style="color:var(--muted);">{{index .T "no_subfolders"}}</p>';
           j.entries.forEach(function(e){
             html+='<div style="cursor:pointer;padding:6px 8px;margin:2px 0;border-radius:6px;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'\'">';
-            html+='📁 <span style="flex:1;cursor:pointer;" onclick="browseDirs(\''+e.id+'\')">'+e.name+'</span>';
+            html+=ICO('files')+'<span style="flex:1;cursor:pointer;" onclick="browseDirs(''+e.id+'')">'+e.name+'</span>';
             html+='<code style="font-size:11px;color:var(--muted);cursor:pointer;" onclick="browseCallback(\''+e.id+'\')" title="选定此目录">'+e.id+'</code></div>';
           });
           html+='</div>';
@@ -1818,8 +1900,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
          uninstall live on the settings page: they are configuration, not
          everyday indexer management. -->
     <div class="card panel" id="jk-setup-panel">
-      <h2>🦜 {{index .T "jk_setup_title"}}</h2>
-      <div id="jk-setup-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+      <h2>{{ico "indexers"}}{{index .T "jk_setup_title"}}</h2>
+      <div id="jk-setup-body"><span class="hint">{{icoSpin}}</span></div>
     </div>
 
     <!-- active indexers -->
@@ -1851,7 +1933,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <span id="jk-batch-btn"></span>
         <button onclick="showJKAddModal()" id="jk-add-btn" style="margin:0 0 0 8px;padding:4px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_add_lib"}}</button>
       </h2>
-      <div id="jk-content"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+      <div id="jk-content"><span class="hint">{{icoSpin}}</span></div>
     </div>
 
     <script>
@@ -1962,14 +2044,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             }else{
               h+='<button onclick="jkActivate(\''+x.id+'\')" style="padding:2px 6px;font-size:11px;margin:0;background:var(--accent);" title="{{index .T "idx_activate_hint"}}">+</button> ';
             }
-            h+='<button onclick="jkRemoveFromJackett(\''+x.id+'\',\''+x.name.replace(/'/g,"\\'")+'\')" style="padding:2px 6px;font-size:10px;margin:0 0 0 2px;background:var(--danger);" title="{{index .T "idx_jk_delete_hint"}}">✕</button>';
+            h+='<button onclick="jkRemoveFromJackett(\''+x.id+'\',\''+x.name.replace(/'/g,"\\'")+'\')" style="padding:2px 6px;font-size:10px;margin:0 0 0 2px;background:var(--danger);" title="{{index .T "idx_jk_delete_hint"}}">{{ico "close"}}</button>';
             h+='</td></tr>';
           });
           h+='</tbody></table>';
           document.getElementById('jk-batch-btn').innerHTML='<button onclick="jkActivateSelected()" style="margin:0 0 0 12px;padding:4px 12px;font-size:12px;background:var(--accent);">{{index .T "idx_batch_add"}}</button>';
           ct.innerHTML=h;
         }catch(e){
-          ct.innerHTML='<div class="hint" style="color:var(--danger);">✗ '+e.message+'</div>';
+          ct.innerHTML='<div class="hint" style="color:var(--danger);">'+ICO('close')+' '+e.message+'</div>';
           cnt.textContent='?';
         }
       }
@@ -1983,19 +2065,19 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         jkAddFilter = '';
         showModal('{{index .T "jk_add_lib"}}',
           '<div style="margin-bottom:10px;"><input id="jk-add-filter" placeholder="{{index .T "jk_search_ph"}}" style="width:100%;padding:8px;" oninput="filterJKAddList()" autofocus></div>'+ 
-          '<div id="jk-add-list" style="max-height:50vh;overflow-y:auto;">⏳ {{index .T "loading"}}</div>',
+          '<div id="jk-add-list" style="max-height:50vh;overflow-y:auto;">{{icoSpin}}</div>',
           [{text:'{{index .T "close_btn"}}',cls:'var(--danger)',cb:function(){closeModal()}}]);
         try{
           var r=await fetch('/indexers/jackett/all');
           var j=await r.json();
           if(!j.ok||!j.data){
-            document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+j.msg+'</span>';
+            document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+j.msg+'</span>';
             return;
           }
           jkAllData=j.data;
           renderJKAddList();
         }catch(e){
-          document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+          document.getElementById('jk-add-list').innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
         }
       }
 
@@ -2221,9 +2303,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           try{
             var r=await fetch('/settings/test115');
             var j=await r.json();
-            if(j.ok){sp.textContent='✓ '+j.msg;sp.style.color='var(--accent-2)';}
-            else{sp.textContent='✗ '+j.msg;sp.style.color='var(--danger)';}
-          }catch(e){sp.textContent='✗ {{index .T "net_error"}}';sp.style.color='var(--danger)';}
+            if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';}
+            else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';}
+          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
         async function testJackett(){
@@ -2238,9 +2320,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             fd.append('apikey',keyEl.value.trim());
             var r=await fetch('/settings/test-jackett',{method:'POST',body:fd});
             var j=await r.json();
-            if(j.ok){sp.textContent='✓ '+j.msg;sp.style.color='var(--accent-2)';}
-            else{sp.textContent='✗ '+j.msg;sp.style.color='var(--danger)';}
-          }catch(e){sp.textContent='✗ {{index .T "net_error"}}';sp.style.color='var(--danger)';}
+            if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';}
+            else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';}
+          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
 
@@ -2250,7 +2332,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         function webhookMsg(text,isErr){
           var el=document.getElementById('webhook-msg');
           if(!el)return;
-          el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+(isErr?'✗ ':'✓ ')+text+'</span>';
+          el.innerHTML='<span style="color:'+(isErr?'var(--danger)':'var(--accent-2)')+';">'+ICO(isErr?'close':'check')+' '+text+'</span>';
           if(!isErr) setTimeout(function(){el.innerHTML='';},2500);
         }
 
@@ -2260,11 +2342,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           try{
             var r=await fetch('/api/webhooks');
             var j=await r.json();
-            if(!j.ok){box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>';return;}
+            if(!j.ok){box.innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+(j.msg||'failed')+'</span>';return;}
             webhookEvents=j.events||[];
             applyWebhooks(j.webhooks||[]);
           }catch(e){
-            box.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+            box.innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
 
@@ -2500,12 +2582,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
           if(env.problems&&env.problems.length){
             h+='<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;font-size:12px;color:var(--danger);">';
-            env.problems.forEach(function(p){ h+='<div>✗ '+p+'</div>'; });
+            env.problems.forEach(function(p){ h+='<div>'+ICO('close')+' '+p+'</div>'; });
             h+='</div>';
           }
           if(env.warnings&&env.warnings.length){
             h+='<div style="margin-top:8px;font-size:12px;color:var(--warn);">';
-            env.warnings.forEach(function(w){ h+='<div>⚠ '+w+'</div>'; });
+            env.warnings.forEach(function(w){ h+='<div>'+ICO('warning')+w+'</div>'; });
             h+='</div>';
           }
           if(!usable&&env.can_install){
@@ -2528,14 +2610,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         async function jkCheckEnv(){
           var el=document.getElementById('jk-env-body');
-          if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+          if(el) el.innerHTML='<span class="hint">{{icoSpin}}</span>';
           try{
             var r=await fetch('/indexers/jackett/env');
             var j=await r.json();
-            if(!j.ok){ if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+(j.msg||'failed')+'</span>'; return; }
+            if(!j.ok){ if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+(j.msg||'failed')+'</span>'; return; }
             renderJKEnv(j.env,j.usable);
           }catch(e){
-            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
 
@@ -2549,11 +2631,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(out){
               var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+ICO(j.ok?'check':'close')+' '+(j.msg||'')+'</span>'+log;
             }
             if(j.env) renderJKEnv(j.env,j.usable);
           }catch(e){
-            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(out) out.innerHTML='<span style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
 
@@ -2569,12 +2651,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(out){
               var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+ICO(j.ok?'check':'close')+' '+(j.msg||'')+'</span>'+log;
             }
             if(j.ok) setTimeout(function(){location.reload();},1500);
             else if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
           }catch(e){
-            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(out) out.innerHTML='<span style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
             if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_install_btn"}}';}
           }
         }
@@ -2590,12 +2672,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(out){
               var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+ICO(j.ok?'check':'close')+' '+(j.msg||'')+'</span>'+log;
             }
             if(j.ok) setTimeout(function(){location.reload();},1500);
             else if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_uninstall_btn"}}';}
           }catch(e){
-            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(out) out.innerHTML='<span style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
             if(btn){btn.disabled=false;btn.textContent='{{index .T "jk_uninstall_btn"}}';}
           }
         }
@@ -2603,14 +2685,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         // ---- version / update ----------------------------------------------
         async function jkCheckUpdate(){
           var el=document.getElementById('jk-update-body');
-          if(el) el.innerHTML='<span class="hint">⏳ {{index .T "loading"}}</span>';
+          if(el) el.innerHTML='<span class="hint">{{icoSpin}}</span>';
           try{
             var r=await fetch('/indexers/jackett/check-update');
             var j=await r.json();
             var st=j.st||{};
             if(!el) return;
             if(st.error){
-              el.innerHTML='<span class="hint" style="color:var(--warn);">⚠ '+st.error+'</span>';
+              el.innerHTML='<span class="hint" style="color:var(--warn);">'+ICO('warning')+st.error+'</span>';
               return;
             }
             var h=jkEnvLine('{{index .T "jk_installed_ver"}}', st.installed||'{{index .T "jk_ver_unknown"}}', !!st.installed);
@@ -2623,7 +2705,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             h+='<div id="jk-update-result" style="margin-top:8px;font-size:12px;"></div>';
             el.innerHTML=h;
           }catch(e){
-            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(el) el.innerHTML='<span class="hint" style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
 
@@ -2638,14 +2720,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(out){
               var log=(j.log&&j.log.length)?('<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;">'+j.log.join('\n')+'</pre>'):'';
-              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>'+log;
+              out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+ICO(j.ok?'check':'close')+' '+(j.msg||'')+'</span>'+log;
             }
             // A stopped instance stays stopped: the user decides when to start it.
             if(j.ok&&j.was_running&&out){
               out.innerHTML+='<div style="margin-top:8px;"><button type="button" onclick="jkStart()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent-2);">{{index .T "jk_start_btn"}}</button></div>';
             }
           }catch(e){
-            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(out) out.innerHTML='<span style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
 
@@ -2655,9 +2737,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           try{
             var r=await fetch('/indexers/jackett/start',{method:'POST'});
             var j=await r.json();
-            if(out) out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+(j.ok?'✓ ':'✗ ')+(j.msg||'')+'</span>';
+            if(out) out.innerHTML='<span style="color:'+(j.ok?'var(--accent-2)':'var(--danger)')+';">'+ICO(j.ok?'check':'close')+' '+(j.msg||'')+'</span>';
           }catch(e){
-            if(out) out.innerHTML='<span style="color:var(--danger);">✗ '+e.message+'</span>';
+            if(out) out.innerHTML='<span style="color:var(--danger);">'+ICO('close')+' '+e.message+'</span>';
           }
         }
         async function checkUpdate(){
@@ -2671,11 +2753,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               sp.innerHTML='{{index .T "update_new_found"}}'.replace('%s','<b>'+j.latest+'</b>').replace('%s','<b>'+j.current+'</b>')+' <button type="button" id="do-update-btn" onclick="doUpdate()" style="margin:0 0 0 8px;padding:4px 10px;font-size:12px;background:var(--accent);">{{index .T "update_do_btn"}}</button>';
               sp.style.color='var(--accent-2)';
             }else if(j.latest){
-              sp.textContent='✓ {{index .T "update_already_latest"}} ('+j.latest+')';sp.style.color='var(--accent-2)';
+              sp.textContent='{{ico "check"}}{{index .T "update_already_latest"}} ('+j.latest+')';sp.style.color='var(--accent-2)';
             }else{
-              sp.textContent='✗ {{index .T "update_fetch_failed"}}';sp.style.color='var(--danger)';
+              sp.textContent='{{ico "close"}}{{index .T "update_fetch_failed"}}';sp.style.color='var(--danger)';
             }
-          }catch(e){sp.textContent='✗ {{index .T "net_error"}}';sp.style.color='var(--danger)';}
+          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
         async function doUpdate(){
@@ -2685,16 +2767,16 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           try{
             var r=await fetch('/settings/update',{method:'POST'});
             var j=await r.json();
-            if(j.ok){sp.textContent='✓ '+j.msg;sp.style.color='var(--accent-2)';setTimeout(function(){location.reload();},3000);}
-            else{sp.textContent='✗ '+j.msg;sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
-          }catch(e){sp.textContent='✗ {{index .T "net_error"}}';sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
+            if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';setTimeout(function(){location.reload();},3000);}
+            else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
+          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
         }
       </script>
       <!-- settings form -->
       <form action="/settings" method="post">
         <!-- Group: System -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🌐 {{index .T "system_label"}}</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "settings2"}}{{index .T "system_label"}}</legend>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:2;min-width:200px;">
               <label>{{index .T "http_proxy_label"}}</label>
@@ -2722,7 +2804,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: Download -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">📥 {{index .T "download_settings_label"}}</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "download"}}{{index .T "download_settings_label"}}</legend>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:1;min-width:90px;">
               <label>{{index .T "chunk_size"}}</label>
@@ -2745,7 +2827,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: Search -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🔍 {{index .T "search_label"}}</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "search"}}{{index .T "search_label"}}</legend>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:1;min-width:100px;">
               <label>{{index .T "page_size_label"}}</label>
@@ -2766,7 +2848,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: Subscription & Notifications -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">📢 {{index .T "subs_notify_label"}}</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "bell"}}{{index .T "subs_notify_label"}}</legend>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:0.8;min-width:100px;">
               <label>{{index .T "subs_interval_label"}}</label>
@@ -2780,9 +2862,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
              single-input + on/off switches were folded in by migration, so what
              gets sent is now decided per entry by event subscription. -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🔔 {{index .T "webhook_section"}}</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "bell"}}{{index .T "webhook_section"}}</legend>
           <div class="hint" style="margin-bottom:10px;">{{index .T "webhook_hint"}}</div>
-          <div id="webhook-list"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+          <div id="webhook-list"><span class="hint">{{icoSpin}}</span></div>
           <div style="margin-top:10px;">
             <button type="button" onclick="webhookAdd()" style="margin:0;padding:5px 12px;font-size:12px;background:var(--accent-2);">{{index .T "webhook_add"}}</button>
             <button type="button" onclick="webhookAddWework()" style="margin:0 0 0 6px;padding:5px 12px;font-size:12px;background:var(--bg);color:var(--accent-2);border:1px solid var(--line);">{{index .T "webhook_add_wework"}}</button>
@@ -2802,7 +2884,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: Jackett -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🦜 Jackett</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "indexers"}}Jackett</legend>
 
           <!-- Mode switch: managed install vs. an instance you run yourself -->
           <div style="margin-bottom:12px;">
@@ -2855,10 +2937,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
             <h3 style="font-size:13px;margin:12px 0 6px;">{{index .T "jk_env_title"}}</h3>
             <div class="hint" style="margin-bottom:6px;">{{index .T "jk_env_hint"}}</div>
-            <div id="jk-env-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+            <div id="jk-env-body"><span class="hint">{{icoSpin}}</span></div>
 
             <h3 style="font-size:13px;margin:16px 0 6px;">{{index .T "jk_update_title"}}</h3>
-            <div id="jk-update-body"><span class="hint">⏳ {{index .T "loading"}}</span></div>
+            <div id="jk-update-body"><span class="hint">{{icoSpin}}</span></div>
           </div>
 
           <!-- External mode note -->
@@ -2869,7 +2951,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
         <!-- Group: TMDB -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
-          <legend style="font-weight:600;font-size:14px;padding:0 8px;">🎬 TMDB API</legend>
+          <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "film"}}TMDB API</legend>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
             <div style="flex:2;min-width:260px;">
               <label>TMDB API Key <small style="color:var(--muted);">(<a href="https://www.themoviedb.org/settings/api" target="_blank">获取 Key</a>)</small></label>

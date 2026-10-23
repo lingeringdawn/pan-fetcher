@@ -2,36 +2,31 @@ package server
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-// templateSourceFile is read directly by the tests below.
-//
-// The dashboard template is a 170 KB inline string in templates.go rather than
-// a separate file, so there is nothing to embed. Reading the source keeps these
-// layout assertions honest — they check what is actually in the file rather than
-// a copy that could drift.
 const templateSourceFile = "templates.go"
+const i18nSourceFile = "i18n.go"
 
-func readTemplateSource(t *testing.T) string {
+func readSource(t *testing.T, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(templateSourceFile)
+	data, err := os.ReadFile(name)
 	if err != nil {
-		t.Fatalf("read %s: %v", templateSourceFile, err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(data)
 }
 
 // TestCollapseButtonDoesNotMove pins the requirement that the collapse control
-// keeps the same position in both sidebar states.
+// keeps the same position in both sidebar states, on both axes.
 //
-// The header previously centred its contents when collapsed, which moved the
-// button from 12px to the middle of the rail — the target shifted out from
-// under the pointer exactly when the user clicked it.
+// Horizontally: the header centred its contents when collapsed, moving the
+// button from the left padding to the middle of the rail.
+// Vertically: the search box was still rendered in the rail, where its
+// placeholder wrapped onto several lines and pushed the row taller.
 func TestCollapseButtonDoesNotMove(t *testing.T) {
-	src := readTemplateSource(t)
+	src := readSource(t, templateSourceFile)
 
 	expanded := cssBlock(t, src, `.sidebar-head {`)
 	collapsed := cssBlock(t, src, `.sidebar.collapsed .sidebar-head {`)
@@ -39,23 +34,47 @@ func TestCollapseButtonDoesNotMove(t *testing.T) {
 	if expanded == "" || collapsed == "" {
 		t.Fatalf("missing header rule (expanded=%q, collapsed=%q)", expanded, collapsed)
 	}
-	if !strings.Contains(expanded, "padding: 14px 12px 10px") {
+	// Same horizontal padding in both states: the button's left edge is fixed.
+	if !strings.Contains(expanded, "padding: 0 12px") {
 		t.Errorf("expanded header padding changed: %s", expanded)
 	}
-	if !strings.Contains(collapsed, "padding: 14px 12px 10px") {
-		t.Errorf("collapsed header must keep the same left padding: %s", collapsed)
+	if !strings.Contains(collapsed, "padding: 0 12px") {
+		t.Errorf("collapsed header must keep the same padding: %s", collapsed)
+	}
+	// A fixed height makes the row identical whether the language select is
+	// present or not, so the button cannot shift vertically.
+	if !strings.Contains(expanded, "height: 52px") {
+		t.Errorf("header needs a fixed height so it does not change with the language control: %s", expanded)
 	}
 	if strings.Contains(collapsed, "justify-content: center") {
-		t.Errorf("collapsed header must not centre its contents, which would move the button: %s", collapsed)
+		t.Errorf("collapsed header must not centre its contents: %s", collapsed)
 	}
 }
 
-// TestCollapseButtonFitsRail verifies the button fits the 64px column.
+// TestSearchHiddenInRail verifies the search box is removed when collapsed.
 //
-// Left plus right padding must leave room for the 28px button, otherwise it is
-// clipped by the sidebar's overflow:hidden and becomes unclickable.
+// It cannot fit in 64px; left in, its placeholder wraps and changes the height
+// of everything below the header.
+func TestSearchHiddenInRail(t *testing.T) {
+	src := readSource(t, templateSourceFile)
+
+	rule := cssBlock(t, src, `.sidebar.collapsed .sidebar-label,`)
+	// The selector list spans several lines before the brace, so look at the
+	// whole rule including what precedes the block.
+	i := strings.Index(src, ".sidebar.collapsed .sidebar-label")
+	if i < 0 {
+		t.Fatal("rail hide rule not found")
+	}
+	seg := src[i : i+400]
+	if !strings.Contains(seg, ".sidebar.collapsed .sidebar-search") {
+		t.Errorf("the rail must hide .sidebar-search, otherwise it wraps and shifts the layout")
+	}
+	_ = rule
+}
+
+// TestCollapseButtonFitsRail verifies the button fits the 64px column.
 func TestCollapseButtonFitsRail(t *testing.T) {
-	src := readTemplateSource(t)
+	src := readSource(t, templateSourceFile)
 
 	const railW, btnW, padL, padR = 64, 28, 12, 12
 	if padL+btnW+padR > railW {
@@ -64,88 +83,108 @@ func TestCollapseButtonFitsRail(t *testing.T) {
 	if !strings.Contains(src, "width: 64px") {
 		t.Error("rail width rule missing")
 	}
-	// The button must declare that width so the arithmetic above holds.
 	if !strings.Contains(src, "width: 28px; height: 28px") {
 		t.Error("collapse button size rule missing")
 	}
 }
 
-// TestNavUsesMonochromeSVG verifies the navigation renders line icons rather
-// than emoji.
-//
-// Emoji render in colour with platform-dependent metrics, so a stray one in the
-// sidebar contradicts the monochrome icon set.
-func TestNavUsesMonochromeSVG(t *testing.T) {
-	keys := []string{
+// TestIconsAreMonochromeSVG verifies every icon is drawn with currentColor and
+// no emoji, which is what makes the set monochrome and themeable.
+func TestIconsAreMonochromeSVG(t *testing.T) {
+	for key, body := range navIconSVG {
+		if strings.Contains(body, `fill="#`) || strings.Contains(body, `stroke="#`) {
+			t.Errorf("%s: hard-codes a colour instead of currentColor", key)
+		}
+		for _, r := range body {
+			if r > 0x2000 {
+				t.Errorf("%s: icon markup contains a non-ASCII glyph %q", key, r)
+			}
+		}
+	}
+	if len(navIconSVG) < 20 {
+		t.Errorf("icon table looks too small: %d entries", len(navIconSVG))
+	}
+}
+
+// TestNavIconKeysCoverNavEntries verifies the two tables stay in step.
+func TestNavIconKeysCoverNavEntries(t *testing.T) {
+	for _, k := range []string{
 		"dashboard", "home", "indexer_search", "indexers",
 		"files", "subs", "runtime_log", "settings", "logout", "about",
-	}
-	for _, k := range keys {
-		svg := string(iconSVG(navIconKeys[k]))
-		if svg == "" {
-			t.Errorf("%s: no svg", k)
+	} {
+		icon, ok := navIconKeys[k]
+		if !ok {
+			t.Errorf("navIconKeys is missing %q", k)
 			continue
 		}
-		if strings.Contains(svg, `fill="#`) || strings.Contains(svg, `stroke="#`) {
-			t.Errorf("%s: icon hard-codes a colour instead of currentColor: %s", k, svg)
-		}
-		for _, r := range svg {
-			if r > 0x2000 {
-				t.Errorf("%s: icon markup contains a non-ASCII glyph %q", k, r)
-			}
+		if _, ok := navIconSVG[icon]; !ok {
+			t.Errorf("navIconKeys[%q] = %q, which is not in navIconSVG", k, icon)
 		}
 	}
 }
 
-// TestNavTooltipsHaveNoEmoji verifies the tooltip text is plain words.
-//
-// The tooltip is the only label visible in the rail, so it must match the
-// monochrome icon instead of reintroducing a colour glyph.
-func TestNavTooltipsHaveNoEmoji(t *testing.T) {
-	keys := []string{
+// TestNavIconsAreDistinct verifies no two navigation entries share an icon.
+func TestNavIconsAreDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for _, k := range []string{
 		"dashboard", "home", "indexer_search", "indexers",
 		"files", "subs", "runtime_log", "settings", "logout", "about",
+	} {
+		svg := string(iconSVG(navIconKeys[k]))
+		if prev, ok := seen[svg]; ok {
+			t.Errorf("%s and %s share the same icon", prev, k)
+		}
+		seen[svg] = k
 	}
-	for _, lang := range []string{"zh", "en"} {
-		for _, k := range keys {
-			_, text := splitNavLabel(tr(lang, k))
-			if text == "" {
-				t.Errorf("%s/%s: empty tooltip", lang, k)
-				continue
+}
+
+// TestIconSVGUnknownKey covers the fallback.
+func TestIconSVGUnknownKey(t *testing.T) {
+	if got := iconSVG("does-not-exist"); got != "" {
+		t.Errorf("unknown key should render nothing, got %q", got)
+	}
+}
+
+// TestNoColourEmojiInSources verifies neither the template nor the translations
+// still contain a colour emoji.
+//
+// The requirement is a monochrome interface: an emoji anywhere renders in colour
+// with platform-specific metrics, next to icons that do not.
+func TestNoColourEmojiInSources(t *testing.T) {
+	check := func(name, src string) {
+		for ln, line := range strings.Split(src, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+				continue // documentation may quote an example
 			}
-			for _, r := range text {
-				if r > 0x2000 && !isCJK(r) {
-					t.Errorf("%s/%s: tooltip %q contains emoji %q", lang, k, text, r)
+			for _, r := range line {
+				if isColourEmoji(r) {
+					t.Errorf("%s:%d contains emoji %q: %s", name, ln+1, r, trimmed)
+					break
 				}
 			}
 		}
 	}
+	check(templateSourceFile, readSource(t, templateSourceFile))
+	check(i18nSourceFile, readSource(t, i18nSourceFile))
 }
 
-// cssBlock returns the declaration block that follows selector.
-func cssBlock(t *testing.T, css, selector string) string {
-	t.Helper()
-	i := strings.Index(css, selector)
-	if i < 0 {
-		return ""
+func isColourEmoji(r rune) bool {
+	switch {
+	case r >= 0x1F000 && r <= 0x1FAFF: // pictographs
+		return true
+	case r >= 0x2600 && r <= 0x27BF: // misc symbols and dingbats
+		return true
+	case r == 0x23F3, r == 0x25B6, r == 0x270E, r == 0x2715: // hourglass, triangle, pencil, cross
+		return true
 	}
-	rest := css[i+len(selector):]
-	j := strings.Index(rest, "}")
-	if j < 0 {
-		return ""
-	}
-	return strings.TrimSpace(rest[:j])
+	return false
 }
 
-func isCJK(r rune) bool {
-	return (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3000 && r <= 0x303F) ||
-		(r >= 0xFF00 && r <= 0xFFEF)
-}
-
-// TestHeaderOrderIsButtonTitleLanguage verifies the collapse button sits to the
-// left of the title, which is the requested layout.
+// TestHeaderOrderIsButtonTitleLanguage verifies the collapse button sits left of
+// the title, which is the requested layout.
 func TestHeaderOrderIsButtonTitleLanguage(t *testing.T) {
-	src := readTemplateSource(t)
+	src := readSource(t, templateSourceFile)
 	i := strings.Index(src, `<div class="sidebar-head">`)
 	if i < 0 {
 		t.Fatal("sidebar-head not found in template")
@@ -163,14 +202,13 @@ func TestHeaderOrderIsButtonTitleLanguage(t *testing.T) {
 		t.Fatalf("header elements missing (btn=%d title=%d lang=%d)", btn, title, lang)
 	}
 	if !(btn < title && title < lang) {
-		t.Errorf("header order must be button < title < language, got positions %d %d %d", btn, title, lang)
+		t.Errorf("header order must be button < title < language, got %d %d %d", btn, title, lang)
 	}
 }
 
-// TestTopbarHasNoCollapseButton verifies the old topbar button is gone, so
-// there is exactly one control for this action.
+// TestTopbarHasNoCollapseButton verifies there is exactly one collapse control.
 func TestTopbarHasNoCollapseButton(t *testing.T) {
-	src := readTemplateSource(t)
+	src := readSource(t, templateSourceFile)
 
 	i := strings.Index(src, `<div class="topbar">`)
 	if i < 0 {
@@ -181,7 +219,7 @@ func TestTopbarHasNoCollapseButton(t *testing.T) {
 		end = len(src)
 	}
 	if strings.Contains(src[i:end], "sidebar-toggle-btn") {
-		t.Error("the topbar still renders a collapse button; it belongs in the sidebar header")
+		t.Error("the topbar still renders a collapse button")
 	}
 	if n := strings.Count(src, `class="sidebar-toggle-btn"`); n != 1 {
 		t.Errorf("expected exactly 1 collapse button, found %d", n)
@@ -190,7 +228,7 @@ func TestTopbarHasNoCollapseButton(t *testing.T) {
 
 // TestNoEmojiSidebarStyles verifies the emoji-era rules are gone.
 func TestNoEmojiSidebarStyles(t *testing.T) {
-	src := readTemplateSource(t)
+	src := readSource(t, templateSourceFile)
 	for _, stale := range []string{
 		"nav-icon",
 		"sidebar-logo",
@@ -202,12 +240,17 @@ func TestNoEmojiSidebarStyles(t *testing.T) {
 	}
 }
 
-// TestTemplateIsParseable guards against a broken template after edits.
-func TestTemplateIsParseable(t *testing.T) {
-	if dashboardTemplate == nil {
-		t.Fatal("dashboardTemplate is nil")
+// cssBlock returns the declaration block that follows selector.
+func cssBlock(t *testing.T, css, selector string) string {
+	t.Helper()
+	i := strings.Index(css, selector)
+	if i < 0 {
+		return ""
 	}
-	if !regexp.MustCompile(`<div class="sidebar`).MatchString(readTemplateSource(t)) {
-		t.Error("templates.go does not contain the sidebar markup")
+	rest := css[i+len(selector):]
+	j := strings.Index(rest, "}")
+	if j < 0 {
+		return ""
 	}
+	return strings.TrimSpace(rest[:j])
 }
