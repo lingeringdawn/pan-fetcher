@@ -1873,7 +1873,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           if(j.entries.length===0)html+='<p style="color:var(--muted);">{{index .T "no_subfolders"}}</p>';
           j.entries.forEach(function(e){
             html+='<div style="cursor:pointer;padding:6px 8px;margin:2px 0;border-radius:6px;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'\'">';
-            html+=ICO('files')+'<span style="flex:1;cursor:pointer;" onclick="browseDirs(''+e.id+'')">'+e.name+'</span>';
+            html+=ICO('files')+'<span style="flex:1;cursor:pointer;" onclick="browseDirs(\''+e.id+'\')">'+e.name+'</span>';
             html+='<code style="font-size:11px;color:var(--muted);cursor:pointer;" onclick="browseCallback(\''+e.id+'\')" title="选定此目录">'+e.id+'</code></div>';
           });
           html+='</div>';
