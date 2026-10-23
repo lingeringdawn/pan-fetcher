@@ -81,21 +81,72 @@ func isIconRune(r rune) bool {
 	return !unicode.IsPunct(r) && !unicode.IsSpace(r)
 }
 
+// navIconSVG holds the monochrome line icons used by the sidebar and the
+// collapse button.
+//
+// They are inline SVG rather than emoji for two reasons: emoji render in colour
+// and differ per platform, which fights a monochrome UI; and their metrics vary
+// wildly, so an icon rail built from them never lines up. Strokes use
+// currentColor so a single CSS rule themes them, and every path is drawn on a
+// 24x24 grid with 1.75 stroke width for a consistent weight.
+var navIconSVG = map[string]string{
+	"dashboard": `<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/>`,
+	"home":      `<path d="M4 17V7l8-4 8 4v10l-8 4-8-4Z"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/>`,
+	"search":    `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
+	"indexers":  `<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4"/><path d="M16.2 16.2a6 6 0 0 0 0-8.4"/><path d="M4.9 4.9a10 10 0 0 0 0 14.2"/><path d="M19.1 19.1a10 10 0 0 0 0-14.2"/>`,
+	"files":     `<path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>`,
+	"subs":      `<rect x="3.5" y="5" width="17" height="14.5" rx="2.5"/><path d="M7.5 3.5v3"/><path d="M16.5 3.5v3"/><path d="M3.5 10h17"/>`,
+	"log":       `<path d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 20V4a.5.5 0 0 1 .5-.5Z"/><path d="M15 3.5V8h4"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
+	"settings":  `<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M4.3 7.5l2 1.2M17.7 15.3l2 1.2M4.3 16.5l2-1.2M17.7 8.7l2-1.2"/>`,
+	"logout":    `<path d="M15 4.5h3.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H15"/><path d="M10 8.5 6.5 12 10 15.5"/><path d="M6.5 12h8"/>`,
+	"about":     `<circle cx="12" cy="12" r="8.5"/><path d="M12 11v6"/><circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>`,
+	"menu":      `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
+}
+
+// iconSVG renders one of navIconSVG on the shared 24x24 grid.
+//
+// Unknown keys return an empty string: a missing icon should leave a gap, not
+// take the page down. The markup is trusted (it is a constant table above), so
+// it is returned as template.HTML rather than escaped.
+func iconSVG(key string) template.HTML {
+	body, ok := navIconSVG[key]
+	if !ok {
+		return ""
+	}
+	return template.HTML(`<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+		body + `</svg>`)
+}
+
+// navIconKeys maps a translation key onto the icon table above.
+//
+// It is separate from the label because two nav entries reuse translation keys
+// that are also page headings ("runtime_log", "indexer_search"), so the emoji
+// cannot simply be read off the label — the heading would lose its wording.
+var navIconKeys = map[string]string{
+	"dashboard":      "dashboard",
+	"home":           "home",
+	"indexer_search": "search",
+	"indexers":       "indexers",
+	"files":          "files",
+	"subs":           "subs",
+	"runtime_log":    "log",
+	"settings":       "settings",
+	"logout":         "logout",
+	"about":          "about",
+}
+
 var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
 	"hasPrefix": strings.HasPrefix,
-	// navIcon and navText split a navigation label into the icon and the words.
-	//
-	// The collapsed sidebar is a narrow icon rail, so it needs the emoji on its
-	// own and the text wrapped in something it can hide. The labels are already
-	// written as "<emoji> words" in i18n, so splitting there keeps a single
-	// source of truth instead of duplicating every label in the template.
-	//
-	// Both take the language, because the sidebar is rendered once per request
-	// and a package-level "current language" would race between requests.
-	"navIcon": func(lang, key string) template.HTML {
-		icon, _ := splitNavLabel(tr(lang, key))
-		return template.HTML(`<span class="nav-icon">` + template.HTMLEscapeString(icon) + `</span>`)
+	// navIcon renders the monochrome icon for a navigation entry.
+	"navIcon": func(key string) template.HTML {
+		return iconSVG(navIconKeys[key])
 	},
+	// navText renders the label with the leading emoji stripped.
+	//
+	// The i18n strings still carry an emoji because the same keys are used as
+	// page headings; here only the words are wanted, since the icon is drawn by
+	// navIcon.
 	"navText": func(lang, key string) template.HTML {
 		_, text := splitNavLabel(tr(lang, key))
 		if text == "" {
@@ -103,6 +154,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 		}
 		return template.HTML(`<span class="nav-text sidebar-label">` + template.HTMLEscapeString(text) + `</span>`)
 	},
+	// navTitle is the tooltip text: the same words navText renders, without the
+	// leading emoji, so a hovered tooltip matches the monochrome icon instead of
+	// reintroducing a colour glyph.
+	"navTitle": func(lang, key string) string {
+		_, text := splitNavLabel(tr(lang, key))
+		if text == "" {
+			return tr(lang, key)
+		}
+		return text
+	},
+	// svgIcon exposes the table to the collapse button and other chrome.
+	"svgIcon": iconSVG,
 	"typeColor": func(t string) string {
 		switch strings.ToLower(t) {
 		case "public":
@@ -159,34 +222,48 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; overflow: hidden;
     }
     /* Collapsed: shrink to an icon rail rather than sliding off-screen, so the
-       navigation stays one click away instead of requiring the ☰ button. */
+       navigation stays one click away. */
     .sidebar.collapsed { width: 64px; min-width: 64px; }
-    /* Everything except the icon itself is hidden in the rail. Text nodes are
-       rendered by the templates as bare strings next to the emoji, so the whole
-       label is wrapped in a span to have something to hide. */
+    /* Everything except the icons is hidden in the rail. Each label is wrapped
+       so there is a single selector to switch off. */
     .sidebar.collapsed .sidebar-label,
-    .sidebar.collapsed .sidebar-search,
-    .sidebar.collapsed .sidebar-nav a .nav-text,
-    .sidebar.collapsed .sidebar-footer .logout-text .nav-text { display: none; }
-    .sidebar.collapsed .sidebar-logo { padding: 16px 0 4px; justify-content: center; }
-    .sidebar.collapsed .sidebar-nav a {
-      justify-content: center; padding: 11px 0; gap: 0; border-left-width: 3px;
+    .sidebar.collapsed .sidebar-nav a .nav-text { display: none; }
+
+    /* Header: button | title | language.
+       The button keeps its exact position and size in both states — collapsing
+       only hides the title and swaps the language control. The left padding is
+       deliberately identical in both states so the collapse target never moves
+       under the pointer; in the rail that leaves the button slightly left of
+       centre, which is the tradeoff for it staying still. */
+    .sidebar-head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 12px 10px;
     }
-    /* The emoji is the icon in the rail, so give it a consistent size and a
-       hit area wide enough to hover (the label is hidden, leaving only the
-       native title tooltip as the affordance). */
-    .sidebar.collapsed .sidebar-nav a .nav-icon {
-      display: block; width: 100%; text-align: center; font-size: 18px; line-height: 1;
+    .sidebar.collapsed .sidebar-head { padding: 14px 12px 10px; gap: 0; }
+    .sidebar-title { font-size: 17px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+    .sidebar-toggle-btn {
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; padding: 0; margin: 0;
+      background: none; border: 1px solid transparent; border-radius: 7px;
+      color: var(--muted); cursor: pointer;
     }
-    .sidebar.collapsed .sidebar-footer { justify-content: center; padding: 12px 0; }
-    .sidebar.collapsed .sidebar-footer .logout-text { font-size: 15px; padding: 4px; }
-    .sidebar-logo { padding: 16px 16px 4px; font-size: 20px; font-weight: 700; color: var(--accent); }
-    /* The rail swaps the language select for a single toggle button. */
-    .lang-toggle { display: none; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-      padding: 3px 6px; font-size: 10px; font-weight: 700; color: var(--muted); cursor: pointer; margin: 0; }
-    .lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
+    .sidebar-toggle-btn:hover { background: var(--bg); color: var(--text); border-color: var(--line); }
+    /* Language: a select when wide. In the rail there is no room for it beside
+       the collapse button — 12px padding + 28px button + 8px gap already fills
+       most of the 64px column — so it is hidden there and reappears when the
+       sidebar is expanded. */
+    .lang-select {
+      margin: 0 0 0 auto; width: auto; font-size: 11px; padding: 2px 4px;
+      border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+    }
+    .lang-toggle { display: none; }
     .sidebar.collapsed .lang-select { display: none; }
-    .sidebar.collapsed .lang-toggle { display: block; }
+
+    /* Monochrome line icons. One rule sizes and colours them, because they are
+       all drawn on the same 24x24 grid with currentColor strokes. */
+    .ico { width: 18px; height: 18px; flex: 0 0 auto; display: block; }
+    .sidebar-toggle-btn .ico { width: 17px; height: 17px; }
+
     .sidebar-subtitle { padding: 0 16px 8px; font-size: 11px; color: var(--muted); }
     .sidebar-search { padding: 10px 14px; }
     .sidebar-search input {
@@ -202,16 +279,20 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     .sidebar-search-hint { font-size: 10px; color: var(--muted); padding: 2px 14px 0; text-align: center; }
     .sidebar-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
     .sidebar-nav a {
-      display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+      display: flex; align-items: center; gap: 10px; padding: 9px 14px; margin: 1px 6px;
       text-decoration: none; color: var(--muted); font-size: 14px; font-weight: 500;
-      transition: all .12s; border-left: 3px solid transparent;
+      transition: background .12s, color .12s; border-radius: 8px;
     }
-    .sidebar-nav a:hover { background: #f0f4ff; color: var(--accent); }
-    .sidebar-nav a.active { background: #eef4ff; color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+    .sidebar-nav a:hover { background: var(--bg); color: var(--text); }
+    .sidebar-nav a.active { background: #eef2ff; color: var(--text); font-weight: 600; }
+    .sidebar-nav a.active .ico { color: var(--accent); }
+    /* In the rail the icons centre themselves in the 64px column. */
+    .sidebar.collapsed .sidebar-nav a { justify-content: center; padding: 10px 0; margin: 1px 8px; gap: 0; }
     .sidebar-footer {
-      padding: 12px 16px; border-top: 1px solid var(--line);
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 10px 8px; border-top: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; gap: 4px;
     }
+    .sidebar.collapsed .sidebar-footer { flex-direction: column; gap: 2px; padding: 8px 0; }
     /* main area */
     .main { flex: 1; margin-left: 230px; padding: 24px 24px 40px; transition: margin-left .2s; min-width: 0; }
     /* The rail is 64px wide, so the content sits beside it rather than under it. */
@@ -315,14 +396,15 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     .topbar-msg { flex: 1; font-size: 13px; color: var(--muted); padding: 6px 12px; background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .topbar-msg.ok { color: var(--accent-2); border-color: #bae6fd; background: #f0f9ff; }
     .topbar-msg.err { color: var(--danger); border-color: #fecaca; background: #fef2f2; }
-    .sidebar-toggle-btn {
-      background: none; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
-      cursor: pointer; font-size: 16px; color: var(--muted); margin: 0;
+    /* Footer links carry an icon plus a label, so they follow the same rules as
+       the nav entries rather than the old text-only styling. */
+    .logout-text {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+      color: var(--muted); text-decoration: none; font-size: 13px; white-space: nowrap;
+      transition: background .12s, color .12s;
     }
-    .sidebar-toggle-btn:hover { background: var(--bg); color: var(--accent); }
-    .sidebar-footer .logout-text { font-size: 13px; }
-    .logout-text { color: var(--muted); text-decoration: none; font-size: 13px; white-space: nowrap; }
-    .logout-text:hover { color: var(--danger); }
+    .logout-text:hover { background: var(--bg); color: var(--text); }
+    .sidebar.collapsed .logout-text { justify-content: center; padding: 8px 0; gap: 0; }
 
     /* search modal */
     .smodal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 40px; }
@@ -417,42 +499,41 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 <body>
   <!-- left sidebar -->
   <div class="sidebar collapsed" id="sidebar">
-    <div class="sidebar-logo" style="display:flex;align-items:center;justify-content:space-between;">
-      <span class="sidebar-label">pan-fetcher</span>
-      <!-- Full select when expanded; in the rail it collapses to a single
-           toggle button, because a select is too wide for 64px. -->
-      <select class="lang-select" onchange="switchLang(this.value)" style="width:auto;font-size:11px;padding:2px 4px;margin:0;border:1px solid var(--line);border-radius:4px;background:var(--bg);">
+    <!-- Header: the collapse button sits left of the title, and stays in the
+         same place in both states so the control does not move under the
+         pointer. Only the title and the language control change. -->
+    <div class="sidebar-head">
+      <button class="sidebar-toggle-btn" type="button" onclick="toggleSidebar()"
+        title="{{index .T "toggle_sidebar"}}" aria-label="{{index .T "toggle_sidebar"}}">{{svgIcon "menu"}}</button>
+      <span class="sidebar-title sidebar-label">pan-fetcher</span>
+      <select class="lang-select sidebar-label" onchange="switchLang(this.value)">
         <option value="zh"{{if eq .Lang "zh"}} selected{{end}}>CN</option>
         <option value="en"{{if eq .Lang "en"}} selected{{end}}>EN</option>
       </select>
-      <button class="lang-toggle" type="button" onclick="switchLang('{{if eq .Lang "zh"}}en{{else}}zh{{end}}')"
-        title="{{if eq .Lang "zh"}}Switch to English{{else}}切换到中文{{end}}"
-        >{{if eq .Lang "zh"}}CN{{else}}EN{{end}}</button>
     </div>
     <div class="sidebar-search">
       <input type="text" id="quick-search-input" placeholder="搜索电影、剧集..." value="" autocomplete="off" onfocus="location.href='/discover';this.blur()">
       <div class="sidebar-search-hint">🎬 TMDB 发现</div>
     </div>
     <div class="sidebar-nav">
-      <a href="/"{{if or (eq .Page "home") (eq .Page "")}} class="active"{{end}} title="{{index .T "dashboard"}}">{{navIcon $.Lang "dashboard"}}{{navText $.Lang "dashboard"}}</a>
-      <a href="/tasks"{{if eq .Page "tasks"}} class="active"{{end}} title="{{index .T "home"}}">{{navIcon $.Lang "home"}}{{navText $.Lang "home"}}</a>
-      <a href="/search"{{if eq .Page "search"}} class="active"{{end}} title="{{index .T "indexer_search"}}">{{navIcon $.Lang "indexer_search"}}{{navText $.Lang "indexer_search"}}</a>
-      <a href="/indexers"{{if eq .Page "indexers"}} class="active"{{end}} title="{{index .T "indexers"}}">{{navIcon $.Lang "indexers"}}{{navText $.Lang "indexers"}}</a>
-      <a href="/fs"{{if eq .Page "fs"}} class="active"{{end}} title="{{index .T "files"}}">{{navIcon $.Lang "files"}}{{navText $.Lang "files"}}</a>
-      <a href="/subs"{{if eq .Page "subs"}} class="active"{{end}} title="{{index .T "subs"}}">{{navIcon $.Lang "subs"}}{{navText $.Lang "subs"}}</a>
-      <a href="/log"{{if eq .Page "log"}} class="active"{{end}} title="{{index .T "runtime_log"}}">{{navIcon $.Lang "runtime_log"}}{{navText $.Lang "runtime_log"}}</a>
-      <a href="/settings"{{if eq .Page "settings"}} class="active"{{end}} title="{{index .T "settings"}}">{{navIcon $.Lang "settings"}}{{navText $.Lang "settings"}}</a>
+      <a href="/"{{if or (eq .Page "home") (eq .Page "")}} class="active"{{end}} title="{{navTitle $.Lang "dashboard"}}">{{navIcon "dashboard"}}{{navText $.Lang "dashboard"}}</a>
+      <a href="/tasks"{{if eq .Page "tasks"}} class="active"{{end}} title="{{navTitle $.Lang "home"}}">{{navIcon "home"}}{{navText $.Lang "home"}}</a>
+      <a href="/search"{{if eq .Page "search"}} class="active"{{end}} title="{{navTitle $.Lang "indexer_search"}}">{{navIcon "indexer_search"}}{{navText $.Lang "indexer_search"}}</a>
+      <a href="/indexers"{{if eq .Page "indexers"}} class="active"{{end}} title="{{navTitle $.Lang "indexers"}}">{{navIcon "indexers"}}{{navText $.Lang "indexers"}}</a>
+      <a href="/fs"{{if eq .Page "fs"}} class="active"{{end}} title="{{navTitle $.Lang "files"}}">{{navIcon "files"}}{{navText $.Lang "files"}}</a>
+      <a href="/subs"{{if eq .Page "subs"}} class="active"{{end}} title="{{navTitle $.Lang "subs"}}">{{navIcon "subs"}}{{navText $.Lang "subs"}}</a>
+      <a href="/log"{{if eq .Page "log"}} class="active"{{end}} title="{{navTitle $.Lang "runtime_log"}}">{{navIcon "runtime_log"}}{{navText $.Lang "runtime_log"}}</a>
+      <a href="/settings"{{if eq .Page "settings"}} class="active"{{end}} title="{{navTitle $.Lang "settings"}}">{{navIcon "settings"}}{{navText $.Lang "settings"}}</a>
     </div>
     <div class="sidebar-footer">
-      <a href="/logout" class="logout-text" title="{{index .T "logout"}}">{{navIcon $.Lang "logout"}}{{navText $.Lang "logout"}}</a>
-      <a href="/about" class="logout-text" title="{{index .T "about"}}">{{navIcon $.Lang "about"}}{{navText $.Lang "about"}}</a>
+      <a href="/logout" class="logout-text" title="{{navTitle $.Lang "logout"}}">{{navIcon "logout"}}{{navText $.Lang "logout"}}</a>
+      <a href="/about" class="logout-text" title="{{navTitle $.Lang "about"}}">{{navIcon "about"}}{{navText $.Lang "about"}}</a>
     </div>
   </div>
 
   <!-- main content -->
   <div class="main expanded" id="main">
     <div class="topbar">
-      <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="{{index .T "toggle_sidebar"}}">☰</button>
       {{if .Error}}<div class="topbar-msg err">{{.Error}}</div>
       {{else if .Message}}<div class="topbar-msg ok">{{.Message}}</div>
       {{else}}<div class="topbar-msg">{{index .T "announcement"}}</div>

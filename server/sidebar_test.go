@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -72,16 +73,32 @@ func TestSplitNavLabelRejectsWordAsIcon(t *testing.T) {
 	}
 }
 
-// TestNavLabelsAllHaveIcons verifies every navigation label the sidebar renders
-// carries an icon, which the rail depends on.
+// TestNavLabelsAllHaveIcons verifies every navigation entry resolves to an icon
+// and a label.
 //
-// A label without one would leave an empty button in the collapsed sidebar —
-// visible only by hovering, which is effectively a dead link.
+// The rail shows only the icon, so a missing one leaves a blank button that is
+// findable only by hovering — effectively a dead link. A missing label leaves
+// the expanded sidebar blank. Both are checked across both languages.
 func TestNavLabelsAllHaveIcons(t *testing.T) {
 	keys := []string{
 		"dashboard", "home", "indexer_search", "indexers",
 		"files", "subs", "runtime_log", "settings", "logout", "about",
 	}
+	for _, k := range keys {
+		svg := string(iconSVG(navIconKeys[k]))
+		if svg == "" {
+			t.Errorf("%s: no icon mapped, the rail would be blank", k)
+			continue
+		}
+		// A well-formed inline icon: an <svg> with a viewBox and a path/shape.
+		if !strings.Contains(svg, "<svg") || !strings.Contains(svg, "viewBox=\"0 0 24 24\"") {
+			t.Errorf("%s: icon is not a 24x24 svg: %s", k, svg)
+		}
+		if !strings.Contains(svg, "stroke=\"currentColor\"") {
+			t.Errorf("%s: icon does not inherit colour, so it cannot be themed", k)
+		}
+	}
+
 	for _, lang := range []string{"zh", "en"} {
 		for _, k := range keys {
 			label := tr(lang, k)
@@ -89,13 +106,54 @@ func TestNavLabelsAllHaveIcons(t *testing.T) {
 				t.Errorf("%s/%s: missing translation", lang, k)
 				continue
 			}
-			icon, text := splitNavLabel(label)
-			if icon == "" {
-				t.Errorf("%s/%s: label %q has no icon, so the rail would be blank", lang, k, label)
-			}
+			_, text := splitNavLabel(label)
 			if text == "" {
 				t.Errorf("%s/%s: label %q has no text, so the expanded sidebar would be blank", lang, k, label)
 			}
+		}
+	}
+}
+
+// TestNavIconsAreDistinct verifies no two navigation entries share an icon.
+//
+// Two identical icons in a rail with no visible labels would be
+// indistinguishable, which defeats the purpose of showing icons at all.
+func TestNavIconsAreDistinct(t *testing.T) {
+	keys := []string{
+		"dashboard", "home", "indexer_search", "indexers",
+		"files", "subs", "runtime_log", "settings", "logout", "about",
+	}
+	seen := map[string]string{}
+	for _, k := range keys {
+		svg := string(iconSVG(navIconKeys[k]))
+		if prev, ok := seen[svg]; ok {
+			t.Errorf("%s and %s share the same icon", prev, k)
+		}
+		seen[svg] = k
+	}
+}
+
+// TestIconSVGUnknownKey covers the fallback: a missing icon must not panic or
+// emit broken markup.
+func TestIconSVGUnknownKey(t *testing.T) {
+	if got := iconSVG("does-not-exist"); got != "" {
+		t.Errorf("unknown key should render nothing, got %q", got)
+	}
+}
+
+// TestNavIconKeysCoverNavEntries verifies the two tables stay in step.
+func TestNavIconKeysCoverNavEntries(t *testing.T) {
+	for _, k := range []string{
+		"dashboard", "home", "indexer_search", "indexers",
+		"files", "subs", "runtime_log", "settings", "logout", "about",
+	} {
+		icon, ok := navIconKeys[k]
+		if !ok {
+			t.Errorf("navIconKeys is missing %q", k)
+			continue
+		}
+		if _, ok := navIconSVG[icon]; !ok {
+			t.Errorf("navIconKeys[%q] = %q, which is not in navIconSVG", k, icon)
 		}
 	}
 }
