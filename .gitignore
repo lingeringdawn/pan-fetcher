@@ -42,3 +42,4 @@ desktop.ini
 # === 运行时缓存（勿提交）===
 search-cache.json
 jackett-enabled.json
+deleted-tags-backup.txt

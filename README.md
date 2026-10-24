@@ -19,13 +19,17 @@
 
 所有网盘操作均通过 115 官方 API 进行。**仅支持 Linux。**
 
-## ✨ 功能
+## 功能
 
-### 🎬 TMDB 发现
+### TMDB 发现
 
-按片名搜索电影与剧集，查看详情（海报、简介、评分、类型），一键带着片名跳到聚合搜索找资源。首页另有热门趋势。
+按片名搜索电影与剧集，查看详情（简介、评分、类型），一键带着片名跳到聚合搜索找资源。
 
-### 🔍 聚合搜索
+首页有本周热门趋势，分电影与剧集两类，并可按类型筛选：**动画、剧情、喜剧、动作、纪录、科幻、悬疑、爱情**，配合「全部」可回到无筛选视图。番剧归在动画下。
+
+> TMDB 的热门接口本身不支持类型过滤，选定类型后改用其发现接口按流行度排序——对某个类型来说，「热门」就是该类型里最流行的作品。
+
+### 聚合搜索
 
 经 Jackett 同时检索你启用的索引器，结果合并去重后按标签自动分类：**字幕组、语言、来源、分辨率、编码、容器、季**，每类可单独筛选，也可按关键词二次过滤。
 
@@ -38,9 +42,7 @@
 
 可在设置页关闭。
 
-<p align="center"><img src=".github/images/1738.jpg" alt="资源搜索" width="70%"></p>
-
-### 📡 Jackett 集成
+### Jackett 集成
 
 搜索通过 Jackett 的 Torznab 协议完成，两种使用方式在设置页切换：
 
@@ -56,14 +58,11 @@
 - **安装前预检**：环境不满足时不下载 50MB，直接给出原因与可粘贴的安装命令
 - **版本检测与更新**：一键更新，先停止运行中的实例再整体替换，失败不影响现有安装
 - **卸载**：默认保留索引器配置与 API Key，重装可复用
-
-<p align="center"><img src=".github/images/jackett-settings.png" alt="Jackett 设置：运行环境检测与版本更新" width="80%"></p>
+- **启动时自动拉起**：服务重启会连同 Jackett 一起停止（二者同属一个 systemd 单元），下次启动时若检测到未运行会自动重新拉起，无需手动干预
 
 索引器库支持批量启用/停用、连接测试，搜索结果标注来源。
 
-<p align="center"><img src=".github/images/indexers.png" alt="索引器管理" width="80%"></p>
-
-### 📋 RSS 订阅
+### RSS 订阅
 
 定时抓取、去重、关键词过滤、缓存管理。
 
@@ -72,27 +71,19 @@
 - **过滤词存在地址中**，编辑时正确回显，保存时同步改写
 - 支持由聚合搜索直接生成订阅
 
-<p align="center"><img src=".github/images/1746.jpg" alt="订阅管理" width="70%"></p>
-
-### 📥 离线下载
+### 离线下载
 
 磁力 / ed2k / http 链接批量提交，按状态分栏查看，支持任务清理。
 
-<p align="center"><img src=".github/images/1740.jpg" alt="离线下载" width="70%"></p>
-
-### 📂 文件管理
+### 文件管理
 
 115 网盘目录浏览、新建文件夹、重命名、移动、复制、删除。
 
-<p align="center"><img src=".github/images/1745.jpg" alt="文件管理" width="70%"></p>
-
-### 📊 仪表盘
+### 仪表盘
 
 运行概览：推送统计、订阅状态、索引器数量、缓存条目、最近新增资源。
 
-<p align="center"><img src=".github/images/1760.jpg" alt="仪表盘" width="70%"></p>
-
-### 🔔 通知推送
+### 通知推送
 
 所有通知目标集中在设置页的**一个列表**里，每条可单独订阅事件：
 
@@ -141,23 +132,18 @@ def verify(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(want, signature_header)
 ```
 
-<p align="center"><img src=".github/images/notifications.png" alt="通知配置" width="80%"></p>
-
-### 📜 运行日志
+### 运行日志
 
 实时日志，最新在前，自动刷新。
 
-<p align="center"><img src=".github/images/1747.jpg" alt="运行日志" width="70%"></p>
+### 面板与部署
 
-### ⚙️ 面板与部署
-
-- **一键自更新**：面板内检查并更新，升级后配置（订阅过滤词、Jackett 连接、通知目标）保持不变
-- 中英双语、HTTPS、密码登录（自更新后密码不会丢失）
+- **一键自更新**：面板内检查并更新，升级后配置（订阅过滤词、Jackett 连接、通知目标、登录密码）保持不变
+- 中英双语、HTTPS、密码登录
+- 全站图标为内联 SVG 单色线条图标，无外部字体或图标库依赖
 - Docker 一键部署、Linux systemd 安装脚本、预编译二进制（amd64 / arm64）
 
-<p align="center"><img src=".github/images/1755.jpg" alt="设置" width="70%"></p>
-
-## 🚀 快速开始
+## 快速开始
 
 > **仅支持 Linux。** pan-fetcher 依赖 Linux 的进程与文件语义（自更新、子进程分离、Jackett 安装），不支持 Windows / macOS。
 
@@ -213,7 +199,7 @@ go build -ldflags="-s -w" -o pan-fetcher .
 ./pan-fetcher server
 ```
 
-## 🖥️ 页面
+## 页面
 
 | 页面 | 路由 | 说明 |
 |------|------|------|
@@ -225,10 +211,10 @@ go build -ldflags="-s -w" -o pan-fetcher .
 | 订阅管理 | `/subs` | RSS 增删改、过滤词、缓存管理 |
 | 运行日志 | `/log` | 实时日志 |
 | 设置 | `/settings` | 登录、代理、通知、Jackett、自更新 |
-| TMDB 发现 | `/discover` | 影视搜索、详情、一键搜资源 |
+| TMDB 发现 | `/discover` | 影视搜索、详情、类型筛选、一键搜资源 |
 | 关于 | `/about` | 版本、作者与致谢 |
 
-## ⌨️ CLI
+## CLI
 
 除 Web 面板外，也可在命令行直接操作。
 
@@ -252,7 +238,7 @@ pan-fetcher fs search-mv <搜索根> <关键词> <目标目录>   # 按关键词
 
 `fs` 子命令支持 `--json` 输出，以及 `--cwd`、`--page-size`、`--list-cache-ttl` 等通用参数。
 
-## 🔧 配置
+## 配置
 
 ```toml
 # config.toml
@@ -268,21 +254,21 @@ http = "http://127.0.0.1:7890"         # HTTP 代理（访问 Jackett 等）
 
 > 登录凭据、通知目标、Jackett 连接、订阅过滤词等均在 Web 设置页管理，保存在数据目录，无需手改配置文件。
 
-## 🛠️ 技术栈
+## 技术栈
 
 Go 1.25 · SQLite（WAL） · 单体 `html/template`（零前端依赖） · [elevengo](https://github.com/Nahuimi/elevengo) 115 API · Torznab
 
-## 👤 作者
+## 作者
 
 **lingeringdawn** — [www8ld.com](https://www8ld.com/)
 
-## 🙏 致谢
+## 致谢
 
 - [zhifengle/rss2cloud](https://github.com/zhifengle/rss2cloud) — 项目原型
 - [Jackett](https://github.com/Jackett/Jackett) — 索引引擎与 Torznab API
 - [Nahuimi/elevengo](https://github.com/Nahuimi/elevengo) — 115 API 库
 
-## 📄 许可证
+## 许可证
 
 [MIT](LICENSE)
 
@@ -298,11 +284,15 @@ Every cloud operation goes through 115's official API. **Linux only.**
 
 ### Features
 
-#### 🎬 TMDB Discover
+#### TMDB Discover
 
-Search movies and TV shows, view details (poster, overview, rating, genres), and jump straight into aggregated search. Trending titles on the home page.
+Search movies and TV shows, view details (overview, rating, genres), and jump straight into aggregated search.
 
-#### 🔍 Aggregated Search
+The home page shows this week's trending titles, split into movies and TV, filterable by genre — **Animation, Drama, Comedy, Action, Documentary, Sci-Fi, Mystery, Romance** — with an "All" chip to clear the filter. Anime is filed under Animation.
+
+> TMDB's trending endpoint takes no genre parameter, so a selected genre switches to its discover endpoint sorted by popularity: for a given genre, "trending" means the most popular titles in it.
+
+#### Aggregated Search
 
 Query all your enabled indexers through Jackett at once. Results are merged, deduplicated, and classified by tag — **fansub group, language, source, resolution, codec, container, season** — each filterable on its own, plus a keyword filter.
 
@@ -315,7 +305,7 @@ Query all your enabled indexers through Jackett at once. Results are merged, ded
 
 Can be turned off in Settings.
 
-#### 📡 Jackett Integration
+#### Jackett Integration
 
 Search runs over Jackett's Torznab API. Two modes, switchable in Settings:
 
@@ -331,14 +321,11 @@ Built-in mode provides:
 - **Pre-flight check**: an unsuitable host is reported before a 50 MB download, with a paste-ready install command
 - **Version check and update**, stopping the running instance first and replacing the tree wholesale — a failed download leaves the working install untouched
 - **Uninstall**, keeping indexer configuration and the API key by default
-
-<p align="center"><img src=".github/images/jackett-settings.png" alt="Jackett settings: environment check and version update" width="80%"></p>
+- **Started again on boot**: a service restart stops Jackett too (both live in the same systemd unit); the next start brings it back automatically if it is not running, with no manual step
 
 The indexer catalog supports batch enable/disable and connection tests; results are labelled with their source.
 
-<p align="center"><img src=".github/images/indexers.png" alt="Indexer management" width="80%"></p>
-
-#### 📋 RSS Subscriptions
+#### RSS Subscriptions
 
 Scheduled fetching, deduplication, keyword filtering and cache management.
 
@@ -347,19 +334,19 @@ Scheduled fetching, deduplication, keyword filtering and cache management.
 - The filter is stored in the feed URL, echoed back correctly when editing, and rewritten on save
 - Subscriptions can be created directly from aggregated search
 
-#### 📥 Offline Downloads
+#### Offline Downloads
 
 Submit magnet / ed2k / http links in bulk, view by status, clear finished tasks.
 
-#### 📂 File Manager
+#### File Manager
 
 Browse and manage 115 cloud storage: create folders, rename, move, copy, delete.
 
-#### 📊 Dashboard
+#### Dashboard
 
 Overview of pushes, subscriptions, indexer count, cache entries and recently added releases.
 
-#### 🔔 Notifications
+#### Notifications
 
 Every destination lives in **one list** in Settings; each entry subscribes to events independently:
 
@@ -399,16 +386,15 @@ def verify(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(want, signature_header)
 ```
 
-<p align="center"><img src=".github/images/notifications.png" alt="Notification configuration" width="80%"></p>
-
-#### 📜 Runtime Log
+#### Runtime Log
 
 Live log, newest first, auto-refreshing.
 
-#### ⚙️ Panel & Deployment
+#### Panel & Deployment
 
-- **In-app self-update**; settings (subscription filters, Jackett connection, notification targets) survive the upgrade
-- Bilingual (CN/EN), HTTPS, password login — and the password survives a self-update
+- **In-app self-update**; settings (subscription filters, Jackett connection, notification targets, login password) survive the upgrade
+- Bilingual (CN/EN), HTTPS, password login
+- Inline SVG line icons throughout — no external font or icon library
 - Docker one-liner, Linux systemd installer, prebuilt binaries (amd64 / arm64)
 
 ### Quick Start
@@ -456,7 +442,7 @@ go build -ldflags="-s -w" -o pan-fetcher .
 | Subscriptions | `/subs` | RSS CRUD, filters, cache management |
 | Runtime Log | `/log` | Live log |
 | Settings | `/settings` | Login, proxy, notifications, Jackett, self-update |
-| TMDB Discover | `/discover` | Movie & TV search, details, one-click search |
+| TMDB Discover | `/discover` | Movie & TV search, details, genre filter |
 | About | `/about` | Version, author, credits |
 
 ### CLI
