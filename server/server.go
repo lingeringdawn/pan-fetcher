@@ -2693,7 +2693,7 @@ func (s *Server) handleTMDBGenres(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	out := []map[string]interface{}{}
 	for _, g := range media.TrendingGenres() {
-		out = append(out, map[string]interface{}{"id": g.ID, "name": g.Name})
+		out = append(out, map[string]interface{}{"id": g.ID, "name": g.Name, "tv_id": g.TVID})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"genres": out})
 }

@@ -12,30 +12,98 @@ import (
 // TestTrendingGenres pins the curated genre list.
 //
 // The ids are TMDB's own and must not change: they are sent as with_genres, and
-// a wrong id silently returns unrelated titles rather than an error.
+// a wrong id silently returns unrelated titles — or, for TV, nothing at all.
 func TestTrendingGenres(t *testing.T) {
-	want := map[int]string{
-		16: "动画", 18: "剧情", 35: "喜剧", 28: "动作",
-		99: "纪录", 878: "科幻", 9648: "悬疑", 10749: "爱情",
+	// film id -> (tv id, name)
+	want := map[int]struct {
+		tvID int
+		name string
+	}{
+		16:    {16, "动画"},
+		18:    {18, "剧情"},
+		35:    {35, "喜剧"},
+		28:    {10759, "动作"},
+		99:    {99, "纪录"},
+		878:   {10765, "科幻"},
+		9648:  {9648, "悬疑"},
+		10749: {10749, "爱情"},
 	}
 	got := TrendingGenres()
 	if len(got) != len(want) {
 		t.Fatalf("got %d genres, want %d", len(got), len(want))
 	}
 	for _, g := range got {
-		name, ok := want[g.ID]
+		w, ok := want[g.ID]
 		if !ok {
 			t.Errorf("unexpected genre id %d", g.ID)
 			continue
 		}
-		if g.Name != name {
-			t.Errorf("genre %d name = %q, want %q", g.ID, g.Name, name)
+		if g.Name != w.name {
+			t.Errorf("genre %d name = %q, want %q", g.ID, g.Name, w.name)
+		}
+		if g.TVID != w.tvID {
+			t.Errorf("genre %d tv id = %d, want %d", g.ID, g.TVID, w.tvID)
 		}
 	}
 	// Animation is the one this feature was asked for; make it first so it is
 	// the easiest chip to reach.
 	if got[0].ID != 16 {
 		t.Errorf("first genre should be Animation (16), got %d", got[0].ID)
+	}
+}
+
+// TestGenreIDForMediaType verifies film ids are remapped for TV where TMDB uses
+// a different id.
+//
+// Sending the film id to /discover/tv does not error, it returns an empty list,
+// which looks like "this genre has no series" rather than "wrong id". That is
+// how Action and Sci-Fi showed 20 films and 0 series.
+func TestGenreIDForMediaType(t *testing.T) {
+	cases := []struct {
+		genreID int
+		media   string
+		want    int
+	}{
+		{16, "movie", 16},
+		{16, "tv", 16},
+		{28, "movie", 28},
+		{28, "tv", 10759}, // Action & Adventure
+		{878, "movie", 878},
+		{878, "tv", 10765}, // Sci-Fi & Fantasy
+		{9648, "tv", 9648},
+		// An id outside the curated table is passed through.
+		{12345, "tv", 12345},
+	}
+	for _, c := range cases {
+		if got := genreIDFor(c.genreID, c.media); got != c.want {
+			t.Errorf("genreIDFor(%d, %q) = %d, want %d", c.genreID, c.media, got, c.want)
+		}
+	}
+}
+
+// TestTrendingFilteredSendsTVGenreID verifies the request for a TV genre uses the
+// TV id, not the film id.
+func TestTrendingFilteredSendsTVGenreID(t *testing.T) {
+	var urls []*url.URL
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
+	}, &urls)
+
+	// 878 (Sci-Fi for films) must become 10765 for TV.
+	if _, err := c.TrendingFiltered("tv", 878, 1); err != nil {
+		t.Fatalf("TrendingFiltered: %v", err)
+	}
+	if got := urls[0].Query().Get("with_genres"); got != "10765" {
+		t.Errorf("with_genres = %q, want 10765 (the TV id for Sci-Fi)", got)
+	}
+
+	// The same genre for films keeps the film id.
+	urls = nil
+	if _, err := c.TrendingFiltered("movie", 878, 1); err != nil {
+		t.Fatalf("TrendingFiltered: %v", err)
+	}
+	if got := urls[0].Query().Get("with_genres"); got != "878" {
+		t.Errorf("with_genres = %q, want 878 (the film id for Sci-Fi)", got)
 	}
 }
 

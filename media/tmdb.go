@@ -342,12 +342,17 @@ func (c *TMDBClient) SearchAll(query string) (movies, tvShows []TMDBResult, err 
 
 // TrendingGenre is a genre a caller can filter the trending lists by.
 //
-// The ids are TMDB's own, which are stable and shared between movies and TV for
-// the genres below. Only a small curated set is offered: the full list differs
-// between the two media types, and a combined picker has to stay meaningful for
-// both.
+// MovieID and TVID differ for some genres: TMDB keeps separate lists, and a few
+// ids that exist for films do not exist for series at all. Action is 28 for
+// films but 10759 (Action & Adventure) for TV, and Sci-Fi is 878 for films but
+// 10765 (Sci-Fi & Fantasy) for TV. Sending the film id to /discover/tv returns
+// nothing rather than an error, so both ids have to be carried.
 type TrendingGenre struct {
-	ID   int
+	// ID is the film genre id; it is also what the panel sends as the selected
+	// value, since one choice has to cover both media types.
+	ID int
+	// TVID is the matching TV genre id, or 0 when the genre has no TV equivalent.
+	TVID int
 	Name string
 }
 
@@ -358,15 +363,31 @@ type TrendingGenre struct {
 // audience — anime is filed under Animation on TMDB.
 func TrendingGenres() []TrendingGenre {
 	return []TrendingGenre{
-		{16, "动画"},
-		{18, "剧情"},
-		{35, "喜剧"},
-		{28, "动作"},
-		{99, "纪录"},
-		{878, "科幻"},
-		{9648, "悬疑"},
-		{10749, "爱情"},
+		{ID: 16, TVID: 16, Name: "动画"},
+		{ID: 18, TVID: 18, Name: "剧情"},
+		{ID: 35, TVID: 35, Name: "喜剧"},
+		{ID: 28, TVID: 10759, Name: "动作"},
+		{ID: 99, TVID: 99, Name: "纪录"},
+		{ID: 878, TVID: 10765, Name: "科幻"},
+		{ID: 9648, TVID: 9648, Name: "悬疑"},
+		{ID: 10749, TVID: 10749, Name: "爱情"},
 	}
+}
+
+// genreIDFor resolves the id to send to TMDB for one media type.
+//
+// An unknown id is passed through unchanged so a caller that supplies its own
+// genre still works; only the curated table is remapped.
+func genreIDFor(genreID int, mediaType string) int {
+	if mediaType != "tv" {
+		return genreID
+	}
+	for _, g := range TrendingGenres() {
+		if g.ID == genreID && g.TVID != 0 {
+			return g.TVID
+		}
+	}
+	return genreID
 }
 
 // TrendingFiltered returns trending titles for one media type, optionally
@@ -398,7 +419,7 @@ func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int) ([]TM
 		// Popularity is the closest analogue to "trending" for a genre, and it is
 		// what makes the filter useful: an unsorted discover call returns
 		// near-arbitrary titles.
-		params.Set("with_genres", strconv.Itoa(genreID))
+		params.Set("with_genres", strconv.Itoa(genreIDFor(genreID, mediaType)))
 		params.Set("sort_by", "popularity.desc")
 		// Do not exclude titles that have not been rated yet — TMDB's default
 		// vote filter hides most anime from the current season.
