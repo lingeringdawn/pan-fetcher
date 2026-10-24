@@ -1,5 +1,20 @@
 # Changelog
 
+## 发布流程
+
+自 v2.0.30 起，打 tag 只产出**预览版**，验证通过后才转正式版：
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin master refs/tags/vX.Y.Z
+# CI 构建并以 prerelease 发布，:latest 不动
+
+# 验证无误后：
+gh workflow run release.yml -f promote=vX.Y.Z
+# 转正式版，并把 Docker :latest 移到该版本
+```
+
+预览版不参与 `/releases/latest`，因此面板的检查更新与无人值守的 `docker pull` 都不会拿到未验证的构建。
+
 ## v2.0.30
 
 ### 新增
