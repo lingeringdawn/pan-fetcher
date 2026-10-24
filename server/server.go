@@ -4875,6 +4875,51 @@ func (s *Server) AutoDiscoverJackett() {
 	} else {
 		log.Printf("[jackett] existing configuration kept (discovered %s)", d.URL)
 	}
+
+	// Jackett shares this service's cgroup, so stopping or restarting
+	// pan-fetcher stops it too — including the restart after a self-update. It
+	// is started again here rather than trying to escape the cgroup: systemd's
+	// process tracking cannot be opted out of from inside the unit (systemd-run
+	// --scope has no way to adopt an existing pid on this systemd version), and
+	// being restarted together is harmless as long as it comes back.
+	if !d.Running {
+		s.startManagedJackettOnBoot()
+	}
+}
+
+// startManagedJackettOnBoot brings up the managed Jackett when the panel is
+// configured to manage it.
+//
+// Only managed mode is touched: an external instance belongs to the operator, so
+// starting one here would be wrong even if it happened to be installed locally.
+func (s *Server) startManagedJackettOnBoot() {
+	if normalizeJackettMode(s.loadWebSettings().JackettMode) != JackettModeManaged {
+		return
+	}
+	dir := s.jackettInstallDir()
+	if _, err := os.Stat(filepath.Join(dir, "jackett")); err != nil {
+		// Nothing installed; the panel's install button is the way forward.
+		return
+	}
+
+	log.Printf("[jackett] managed install is not running, starting it")
+	// Detached from startup: bringing Jackett up takes a few seconds, and the
+	// panel should not wait for it.
+	go func() {
+		url := fmt.Sprintf("http://127.0.0.1:%d", jackett.DefaultPort)
+		actual, err := jackett.Start(context.Background(), dir, url, log.Printf)
+		if err != nil {
+			log.Printf("[jackett] auto-start failed: %v", err)
+			return
+		}
+		log.Printf("[jackett] auto-started at %s", actual)
+		// The port Jackett really uses may differ from the requested one, so
+		// adopt what answered instead of assuming.
+		if actual != "" && actual != s.JackettURL {
+			s.applyJackettSettings(actual, s.JackettAPIKey, s.JackettAdminPassword)
+		}
+		s.refreshJackettCache()
+	}()
 }
 
 // databasePathAbs returns the absolute path of the SQLite database file.

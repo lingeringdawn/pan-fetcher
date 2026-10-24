@@ -170,22 +170,17 @@ ExecStart=${BIN_PATH} server
 # configured Jackett as "not configured".
 Environment=HOME=${HOME_DIR}
 
-# Jackett is started by pan-fetcher but must outlive it. The default
-# KillMode=control-group kills every process in the unit's cgroup on restart, so
-# restarting pan-fetcher (including its in-panel self-update) would take Jackett
-# down with it and leave search broken until someone started it by hand.
+# No KillMode override: the default (control-group) is what makes a restart
+# clean. It stops every process in the unit's cgroup, including the managed
+# Jackett, and pan-fetcher starts Jackett again on boot.
 #
-# KillMode=process alone was tried and is wrong: it also leaves pan-fetcher's own
-# replacement process alive, so a restart ends up with two servers racing for the
-# port and the unit loops on "address already in use". mixed is the correct
-# setting — SIGTERM goes to the main process only, and the cgroup is cleaned up
-# with SIGKILL afterwards, which is what a service restart needs.
-#
-# Jackett survives not because of the kill mode but because it is started in its
-# own session (setsid) *and* moved out of this cgroup by Delegate, so the
-# post-stop cgroup sweep does not reach it.
-KillMode=mixed
-Delegate=yes
+# Two earlier overrides were tried here and both were wrong:
+#   - KillMode=process kept Jackett alive but also left pan-fetcher's own
+#     replacement process running, so a self-update restart produced two servers
+#     racing for the port and the unit looped on "address already in use".
+#   - Delegate=yes was added on top, which handed cgroup cleanup to the service
+#     and killed Jackett anyway, so it bought nothing.
+# Letting the cgroup be swept and restarting Jackett is simpler and reliable.
 
 Restart=always
 RestartSec=10s

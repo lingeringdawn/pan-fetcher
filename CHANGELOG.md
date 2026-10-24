@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.0.24
+
+### 修复
+- **撤销对 systemd `KillMode` 的改动，改为启动时自动拉起 Jackett**。v2.0.12 为了「重启 pan-fetcher 时不连带停止 Jackett」把 unit 设成了 `KillMode=process`。这个改动是多余的：Jackett 当时是由运维手动在会话中启动的，本来就不在服务的 cgroup 里，因此重启从未影响它。而这个改动反而引入两个问题——`process` 让 pan-fetcher 自己的替换进程也不被清理，自更新后两个进程争抢 8115 端口，unit 陷入重启循环；随后补的 `Delegate=yes` 又会清理整个 cgroup，照样把 Jackett 杀掉。
+
+  现在恢复默认（不设 `KillMode`），并在启动时检测：若为内置模式、安装存在且 Jackett 未运行，则自动拉起。重启会短暂中断 Jackett，但它会自行恢复，不再需要人工介入。
+
+  外部模式不受影响——那种情况下实例属于运维，本程序不会去启动它。
+
 ## v2.0.23
 
 ### 修复
