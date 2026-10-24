@@ -2635,14 +2635,16 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
 		page = p
 	}
-	// genre is optional: 0 (or absent) keeps the plain trending lists, which is
-	// what the panel showed before filtering existed.
+	// genre is optional: 0 (or absent) keeps the plain trending lists.
 	genreID := 0
 	if g, err := strconv.Atoi(r.URL.Query().Get("genre")); err == nil && g > 0 {
 		genreID = g
 	}
-	// sort is optional too; "date" switches to newest-first, which together with
-	// a genre gives the "new releases" view.
+	// year is optional too; it narrows to one release / first-air year.
+	year := 0
+	if y, err := strconv.Atoi(r.URL.Query().Get("year")); err == nil && y > 1800 && y < 2200 {
+		year = y
+	}
 	sort := media.ParseTrendingSort(r.URL.Query().Get("sort"))
 
 	type result struct {
@@ -2664,18 +2666,31 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 
+	filtered := genreID > 0 || sort == media.SortDate || year > 0
 	var movies, tvShows []media.TMDBResult
 	var err error
-	if genreID > 0 || sort == media.SortDate {
-		// Both filtering and date ordering need one request per media type: the
-		// discover endpoint is per-type, and the date field differs between them.
-		if movies, err = media.DefaultTMDB.TrendingFiltered("movie", genreID, page, sort); err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
-			return
+	if filtered {
+		// The genre lists are per media type, so a genre that is valid for films
+		// may not exist for series. Each side is asked for only what it supports
+		// rather than failing the whole request: selecting "Horror" should still
+		// show the film list, with the TV side simply empty.
+		if genreID == 0 || genreValidForMedia("movie", genreID) {
+			movies, err = media.DefaultTMDB.Discover(media.DiscoverQuery{
+				MediaType: "movie", GenreID: genreID, Sort: sort, Year: year, Page: page,
+			})
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+				return
+			}
 		}
-		if tvShows, err = media.DefaultTMDB.TrendingFiltered("tv", genreID, page, sort); err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
-			return
+		if genreID == 0 || genreValidForMedia("tv", genreID) {
+			tvShows, err = media.DefaultTMDB.Discover(media.DiscoverQuery{
+				MediaType: "tv", GenreID: genreID, Sort: sort, Year: year, Page: page,
+			})
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+				return
+			}
 		}
 	} else {
 		if movies, tvShows, err = media.DefaultTMDB.TrendingPage(page); err != nil {
@@ -2689,17 +2704,46 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		"tv":     convert(tvShows, "tv"),
 		"genre":  genreID,
 		"sort":   string(sort),
+		"year":   year,
 	})
 }
 
-// handleTMDBGenres lists the genres the trending section can be filtered by.
+// genreValidForMedia reports whether a genre id belongs to that media type.
+func genreValidForMedia(mediaType string, id int) bool {
+	for _, g := range media.TrendingGenres(mediaType) {
+		if g.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// handleTMDBGenres lists the genres available for one media type.
+//
+// The lists differ between films and series, so the caller says which it wants;
+// an absent type returns both, keyed by media type, which lets a client preload
+// without two round trips.
 func (s *Server) handleTMDBGenres(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	out := []map[string]interface{}{}
-	for _, g := range media.TrendingGenres() {
-		out = append(out, map[string]interface{}{"id": g.ID, "name": g.Name, "tv_id": g.TVID})
+	convert := func(list []media.TrendingGenre) []map[string]interface{} {
+		out := make([]map[string]interface{}, 0, len(list))
+		for _, g := range list {
+			out = append(out, map[string]interface{}{"id": g.ID, "name": g.Name})
+		}
+		return out
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"genres": out})
+
+	switch r.URL.Query().Get("type") {
+	case "movie":
+		json.NewEncoder(w).Encode(map[string]interface{}{"genres": convert(media.TrendingGenres("movie"))})
+	case "tv":
+		json.NewEncoder(w).Encode(map[string]interface{}{"genres": convert(media.TrendingGenres("tv"))})
+	default:
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"movie": convert(media.TrendingGenres("movie")),
+			"tv":    convert(media.TrendingGenres("tv")),
+		})
+	}
 }
 
 func (s *Server) handleTMDBDetail(w http.ResponseWriter, r *http.Request) {

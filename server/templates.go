@@ -1371,16 +1371,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
          the tabs above so the two levels stay distinguishable. */
       .trending-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 12px;}
       .trending-filters-label{font-size:11px;color:var(--muted);margin-right:2px;}
-      /* Shortcut to the new-anime view: a preset rather than a filter, so it is
-         set apart from the chips with a small gap and its own border. */
-      .trending-shortcut{
-        display:inline-flex;align-items:center;gap:4px;margin-left:auto;
-        padding:3px 10px;border-radius:14px;font-size:12px;cursor:pointer;
-        background:var(--card);border:1px dashed var(--line);color:var(--muted);
-        transition:color .12s,border-color .12s;
-      }
-      .trending-shortcut:hover{color:var(--accent);border-color:var(--accent);}
-      .trending-shortcut .ico{width:13px;height:13px;}
       .genre-chip{
         padding:3px 12px;border-radius:14px;font-size:12px;cursor:pointer;
         background:var(--bg);border:1px solid var(--line);color:var(--muted);
@@ -1421,26 +1411,35 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div class="tmdb-grid" id="tmdb-grid"></div>
     </div>
 
-    <!-- Trending section -->
+    <!-- Discover section.
+         The heading is deliberately neutral: the list below it is no longer only
+         "trending", since a sort control switches between popular and newest.
+         Sorting is a top-level tab beside the media type, because it changes what
+         the whole list means; the genre row is a refinement of that. -->
     <div id="trending-section" style="margin-top:24px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-        <h3 style="margin:0;font-size:16px;">{{ico "film"}}热门推荐</h3>
-        <span style="font-size:11px;color:var(--muted);">本周流行</span>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+        <h3 style="margin:0;font-size:16px;">{{ico "tmdb"}}{{index .T "trending_title"}}</h3>
+        <span style="font-size:11px;color:var(--muted);" id="trending-subtitle">{{index .T "trending_sub_popular"}}</span>
       </div>
       <div class="search-tabs" style="margin-bottom:0;">
-        <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}热门电影</div>
-        <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}热门剧集</div>
+        <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}{{index .T "trending_tab_movies"}}</div>
+        <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}{{index .T "trending_tab_tv"}}</div>
       </div>
-      <!-- Sort. "Newest" is the date-ordered view; with the Animation genre it
-           becomes the new-anime list, which is what the shortcut below sets. -->
+      <!-- Sort: popular vs newest. Two separate chips rather than a toggle, so
+           the current mode is always visible. -->
       <div class="trending-filters" id="trending-sorts">
         <span class="trending-filters-label">{{index .T "trending_sort"}}</span>
         <span class="genre-chip active" data-sort="popularity" onclick="selectTrendingSort('popularity')">{{index .T "trending_sort_popular"}}</span>
         <span class="genre-chip" data-sort="date" onclick="selectTrendingSort('date')">{{index .T "trending_sort_new"}}</span>
-        <span class="trending-shortcut" id="trending-newanime" onclick="selectNewAnime()" title="{{index .T "trending_newanime_hint"}}">{{ico "tv"}}{{index .T "trending_newanime"}}</span>
+      </div>
+      <!-- Year. A short list rather than a picker: the useful choices are this
+           year and the few before it. -->
+      <div class="trending-filters" id="trending-years">
+        <span class="trending-filters-label">{{index .T "trending_year"}}</span>
+        <!-- Filled by JS so the range follows the calendar. -->
       </div>
       <!-- Genre filter. TMDB's trending endpoints take no genre argument, so a
-           selection switches the request to /discover sorted by popularity. -->
+           selection switches the request to /discover. -->
       <div class="trending-filters" id="trending-filters">
         <span class="trending-filters-label">{{index .T "trending_genre"}}</span>
         <!-- Filled by JS from /api/tmdb/genres, with "all" always first. -->
@@ -1677,30 +1676,63 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     var trendingGenre=0,trendingGenres=[];
     // 'popularity' or 'date'; date gives the newest-first view.
     var trendingSort='popularity';
+    // Selected release year: 0 means any year.
+    var trendingYear=0;
 
     function switchTrendingTab(tab){
       if(trendingTab===tab&&trendingMovies.length)return;
       trendingTab=tab;
       document.querySelectorAll('[data-trending]').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-trending')===tab);});
+      // The genre list belongs to the media type, so it has to be rebuilt before
+      // the cards are shown — otherwise the chips would offer genres the new type
+      // does not have.
+      loadTrendingGenres();
       renderTrendingCards(tab);
     }
 
-    // loadTrendingGenres fills the chip row. The "all" chip is rendered first so
-    // the unfiltered view is always one click away.
+    // loadTrendingGenres fills the chip row for the current media type.
+    //
+    // The genre lists differ between films and series (Horror exists for films
+    // only; Kids and Reality for series only), so this is re-run whenever the tab
+    // changes. A previously selected genre that does not exist in the new list is
+    // dropped rather than kept, because sending it would return nothing.
     async function loadTrendingGenres(){
       var box=document.getElementById('trending-filters');
       if(!box)return;
+      var media=trendingTab==='movies'?'movie':'tv';
       try{
-        var r=await fetch('/api/tmdb/genres');
+        var r=await fetch('/api/tmdb/genres?type='+media);
         var j=await r.json();
         trendingGenres=j.genres||[];
       }catch(e){ trendingGenres=[]; }
+      var stillValid=false;
+      trendingGenres.forEach(function(g){if(g.id===trendingGenre)stillValid=true;});
+      if(!stillValid)trendingGenre=0;
       var h='<span class="trending-filters-label">{{index .T "trending_genre"}}</span>';
       h+='<span class="genre-chip'+(trendingGenre===0?' active':'')+'" data-genre="0" onclick="selectTrendingGenre(0)">{{index .T "trending_genre_all"}}</span>';
       trendingGenres.forEach(function(g){
         h+='<span class="genre-chip'+(trendingGenre===g.id?' active':'')+'" data-genre="'+g.id+'" onclick="selectTrendingGenre('+g.id+')">'+escHTML(g.name)+'</span>';
       });
       box.innerHTML=h;
+      updateTrendingSubtitle();
+    }
+
+    // updateTrendingSubtitle keeps the line beside the heading in step with the
+    // current selection, so the list is never ambiguous: it says how the results
+    // are ordered, and which genre and year narrow them.
+    function updateTrendingSubtitle(){
+      var el=document.getElementById('trending-subtitle');
+      if(!el)return;
+      var parts=[trendingSort==='date'
+        ?'{{index .T "trending_sub_new"}}'
+        :'{{index .T "trending_sub_popular"}}'];
+      if(trendingGenre>0){
+        for(var i=0;i<trendingGenres.length;i++){
+          if(trendingGenres[i].id===trendingGenre){parts.push(trendingGenres[i].name);break;}
+        }
+      }
+      if(trendingYear>0)parts.push(String(trendingYear));
+      el.textContent=parts.join(' · ');
     }
 
     // reloadTrending clears the cached lists and refetches.
@@ -1710,6 +1742,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     // different orderings.
     function reloadTrending(){
       trendingMovies=[];trendingTV=[];trendingPage=1;
+      updateTrendingSubtitle();
       var grid=document.getElementById('trending-grid');
       if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
       loadTrending();
@@ -1733,18 +1766,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       reloadTrending();
     }
 
-    // selectNewAnime jumps to the new-anime view: Animation, newest first.
-    //
-    // It is a preset over the two filters rather than a separate mode, so the
-    // chips update to show what it selected and the user can adjust from there.
-    function selectNewAnime(){
-      trendingSort='date';
-      document.querySelectorAll('#trending-sorts .genre-chip').forEach(function(c){
-        c.classList.toggle('active',c.getAttribute('data-sort')==='date');
-      });
-      trendingGenre=16;
-      document.querySelectorAll('#trending-filters .genre-chip').forEach(function(c){
-        c.classList.toggle('active',Number(c.getAttribute('data-genre'))===16);
+    function selectTrendingYear(year){
+      if(trendingYear===year)return;
+      trendingYear=year;
+      document.querySelectorAll('#trending-years .genre-chip').forEach(function(c){
+        c.classList.toggle('active',Number(c.getAttribute('data-year'))===year);
       });
       reloadTrending();
     }
@@ -1775,6 +1801,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       var q='/api/tmdb/trending?page='+page;
       if(trendingGenre>0)q+='&genre='+trendingGenre;
       if(trendingSort==='date')q+='&sort=date';
+      if(trendingYear>0)q+='&year='+trendingYear;
       return q;
     }
 
@@ -1828,6 +1855,23 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }catch(e){btn.innerHTML=moreLabel;btn.disabled=false;}
     }
 
+    // renderTrendingYears fills the year chips: this year and the four before it.
+    //
+    // Built here rather than server-side so the list stays correct across a year
+    // boundary without a rebuild.
+    function renderTrendingYears(){
+      var box=document.getElementById('trending-years');
+      if(!box)return;
+      var h='<span class="trending-filters-label">{{index .T "trending_year"}}</span>';
+      h+='<span class="genre-chip'+(trendingYear===0?' active':'')+'" data-year="0" onclick="selectTrendingYear(0)">{{index .T "trending_year_all"}}</span>';
+      var thisYear=new Date().getFullYear();
+      for(var y=thisYear;y>thisYear-5;y--){
+        h+='<span class="genre-chip'+(trendingYear===y?' active':'')+'" data-year="'+y+'" onclick="selectTrendingYear('+y+')">'+y+'</span>';
+      }
+      box.innerHTML=h;
+    }
+
+    renderTrendingYears();
     loadTrendingGenres();
     loadTrending();
     var trendingObserver=new IntersectionObserver(function(entries){

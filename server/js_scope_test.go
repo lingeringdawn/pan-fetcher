@@ -85,27 +85,60 @@ func TestEscHTMLIsDeclaredOnce(t *testing.T) {
 	}
 }
 
-// TestTrendingGenreWiring verifies the discover page's genre filter is wired end
-// to end: the chip container, the loader, the click handler and the request.
+// TestTrendingGenreWiring verifies the discover page's filters are wired end to
+// end: the chip containers, the loaders, the click handlers and the request.
 func TestTrendingGenreWiring(t *testing.T) {
 	src := readSource(t, templateSourceFile)
 
 	for _, needle := range []string{
-		`id="trending-filters"`,     // container the chips render into
-		"loadTrendingGenres()",      // fills the row
-		"selectTrendingGenre(",      // click handler
-		"trendingGenre",             // selected state
-		"'/api/tmdb/genres'",        // genre list request
-		"'&genre='+trendingGenre",   // filter applied to the trending request
-		"trendingQuery(",            // single place that builds the request
+		`id="trending-filters"`,    // container the genre chips render into
+		`id="trending-sorts"`,      // sort chips
+		`id="trending-years"`,      // year chips
+		"loadTrendingGenres()",     // fills the genre row
+		"renderTrendingYears()",    // fills the year row
+		"selectTrendingGenre(",     // genre click handler
+		"selectTrendingSort(",      // sort click handler
+		"selectTrendingYear(",      // year click handler
+		"trendingGenre",            // genre state
+		"trendingSort",             // sort state
+		"trendingYear",             // year state
+		"'/api/tmdb/genres?type='", // genre list request, per media type
+		"'&genre='+trendingGenre",  // genre applied to the request
+		"'&year='+trendingYear",    // year applied to the request
+		"trendingQuery(",           // single place that builds the request
 	} {
 		if !strings.Contains(src, needle) {
-			t.Errorf("discover page is missing %q; the genre filter would not work", needle)
+			t.Errorf("discover page is missing %q; that filter would not work", needle)
 		}
 	}
 
-	// The loader must actually be invoked, not just defined.
-	if !regexp.MustCompile(`(?m)^\s*loadTrendingGenres\(\);`).MatchString(src) {
-		t.Error("loadTrendingGenres() is defined but never called, so the chips never appear")
+	// The loaders must actually be invoked, not just defined.
+	for _, call := range []string{"loadTrendingGenres()", "renderTrendingYears()"} {
+		if !regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(call) + `;`).MatchString(src) {
+			t.Errorf("%s is defined but never called, so its chips never appear", call)
+		}
+	}
+}
+
+// TestGenreListFollowsMediaType verifies the genre list is reloaded when the tab
+// changes.
+//
+// The two genre lists differ, so keeping the old chips after switching tabs would
+// offer genres the new media type does not have — and selecting one returns an
+// empty list that looks like "no results".
+func TestGenreListFollowsMediaType(t *testing.T) {
+	src := readSource(t, templateSourceFile)
+
+	i := strings.Index(src, "function switchTrendingTab(")
+	if i < 0 {
+		t.Fatal("switchTrendingTab not found")
+	}
+	end := strings.Index(src[i:], "\n    }")
+	if end < 0 {
+		end = len(src) - i
+	}
+	body := src[i : i+end]
+	if !strings.Contains(body, "loadTrendingGenres()") {
+		t.Error("switchTrendingTab must reload the genre list, since it is per media type")
 	}
 }

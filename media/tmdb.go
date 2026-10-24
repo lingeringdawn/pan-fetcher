@@ -340,54 +340,88 @@ func (c *TMDBClient) SearchAll(query string) (movies, tvShows []TMDBResult, err 
 	return movies, tvShows, nil
 }
 
-// TrendingGenre is a genre a caller can filter the trending lists by.
+// TrendingGenre is a genre a caller can filter the discover lists by.
 //
-// MovieID and TVID differ for some genres: TMDB keeps separate lists, and a few
-// ids that exist for films do not exist for series at all. Action is 28 for
-// films but 10759 (Action & Adventure) for TV, and Sci-Fi is 878 for films but
-// 10765 (Sci-Fi & Fantasy) for TV. Sending the film id to /discover/tv returns
-// nothing rather than an error, so both ids have to be carried.
+// TMDB keeps a separate genre list per media type, and the two overlap only
+// partly: films have Horror, Thriller and War, series have Kids, Reality, Soap
+// and Talk, and a few names that exist in both use different ids (Action is 28
+// for films but 10759 for series; Sci-Fi is 878 versus 10765). Sending a film id
+// to /discover/tv does not error — it returns nothing — so the two lists are kept
+// apart rather than merged.
 type TrendingGenre struct {
-	// ID is the film genre id; it is also what the panel sends as the selected
-	// value, since one choice has to cover both media types.
-	ID int
-	// TVID is the matching TV genre id, or 0 when the genre has no TV equivalent.
-	TVID int
+	ID   int
 	Name string
 }
 
-// TrendingGenres returns the genres the trending lists can be filtered by, in
-// the order the UI presents them.
-//
-// Animation and documentary are the two that matter most for this project's
-// audience — anime is filed under Animation on TMDB.
-func TrendingGenres() []TrendingGenre {
+// movieGenres is TMDB's film genre list, in a reading order rather than by id.
+func movieGenres() []TrendingGenre {
 	return []TrendingGenre{
-		{ID: 16, TVID: 16, Name: "动画"},
-		{ID: 18, TVID: 18, Name: "剧情"},
-		{ID: 35, TVID: 35, Name: "喜剧"},
-		{ID: 28, TVID: 10759, Name: "动作"},
-		{ID: 99, TVID: 99, Name: "纪录"},
-		{ID: 878, TVID: 10765, Name: "科幻"},
-		{ID: 9648, TVID: 9648, Name: "悬疑"},
-		{ID: 10749, TVID: 10749, Name: "爱情"},
+		{28, "动作"},
+		{12, "冒险"},
+		{16, "动画"},
+		{35, "喜剧"},
+		{80, "犯罪"},
+		{99, "纪录"},
+		{18, "剧情"},
+		{10751, "家庭"},
+		{14, "奇幻"},
+		{36, "历史"},
+		{27, "恐怖"},
+		{10402, "音乐"},
+		{9648, "悬疑"},
+		{10749, "爱情"},
+		{878, "科幻"},
+		{53, "惊悚"},
+		{10752, "战争"},
+		{37, "西部"},
 	}
 }
 
-// genreIDFor resolves the id to send to TMDB for one media type.
-//
-// An unknown id is passed through unchanged so a caller that supplies its own
-// genre still works; only the curated table is remapped.
-func genreIDFor(genreID int, mediaType string) int {
-	if mediaType != "tv" {
-		return genreID
+// tvGenres is TMDB's series genre list, in a reading order rather than by id.
+func tvGenres() []TrendingGenre {
+	return []TrendingGenre{
+		{10759, "动作冒险"},
+		{16, "动画"},
+		{35, "喜剧"},
+		{80, "犯罪"},
+		{99, "纪录"},
+		{18, "剧情"},
+		{10751, "家庭"},
+		{10762, "儿童"},
+		{9648, "悬疑"},
+		{10763, "新闻"},
+		{10764, "真人秀"},
+		{10765, "科幻奇幻"},
+		{10766, "肥皂剧"},
+		{10767, "脱口秀"},
+		{10768, "战争政治"},
+		{37, "西部"},
 	}
-	for _, g := range TrendingGenres() {
-		if g.ID == genreID && g.TVID != 0 {
-			return g.TVID
+}
+
+// TrendingGenres returns the genre list for one media type.
+//
+// An unknown type gets the film list, since that is the larger of the two and
+// the one a caller is most likely to mean.
+func TrendingGenres(mediaType string) []TrendingGenre {
+	if mediaType == "tv" {
+		return tvGenres()
+	}
+	return movieGenres()
+}
+
+// genreValidFor reports whether id is a genre of the given media type.
+//
+// The check exists because the two lists are not interchangeable: filtering TV by
+// a film-only id silently returns an empty list, which reads as "nothing here"
+// rather than "wrong id".
+func genreValidFor(mediaType string, id int) bool {
+	for _, g := range TrendingGenres(mediaType) {
+		if g.ID == id {
+			return true
 		}
 	}
-	return genreID
+	return false
 }
 
 // TrendingSort selects how discover results are ordered.
@@ -397,8 +431,7 @@ const (
 	// SortPopularity orders by TMDB popularity. It is the default, and it is
 	// what "trending" means for a genre.
 	SortPopularity TrendingSort = "popularity"
-	// SortDate orders by release / first-air date, newest first. Combined with
-	// the Animation genre it becomes the "new anime" view.
+	// SortDate orders by release / first-air date, newest first.
 	SortDate TrendingSort = "date"
 )
 
@@ -422,20 +455,44 @@ func dateField(mediaType string) string {
 	return "primary_release_date"
 }
 
-// TrendingFiltered returns trending titles for one media type, optionally
-// restricted to a genre and ordered by popularity or by date, with paging.
+// DiscoverQuery describes one request to the discover lists.
+type DiscoverQuery struct {
+	// MediaType is "movie" or "tv".
+	MediaType string
+	// GenreID restricts to one genre of that media type; 0 means any.
+	GenreID int
+	// Sort orders the result.
+	Sort TrendingSort
+	// Year restricts to one release / first-air year; 0 means any.
+	Year int
+	Page int
+}
+
+// hasFilters reports whether the query needs the discover endpoint.
 //
-// TMDB's /trending endpoints take neither a genre nor a sort parameter, so both
-// filtering and date ordering have to go through /discover. Without either, the
-// trending endpoint is used, because its ordering is TMDB's own popularity
-// signal rather than something reconstructed here.
-func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int, sort TrendingSort) ([]TMDBResult, error) {
+// TMDB's /trending takes neither a genre, a sort nor a year, so any of them means
+// the query has to go through /discover instead.
+func (q DiscoverQuery) hasFilters() bool {
+	return q.GenreID > 0 || q.Sort == SortDate || q.Year > 0
+}
+
+// Discover returns one page of titles matching the query.
+//
+// An unfiltered query still uses /trending, because its ordering is TMDB's own
+// popularity signal rather than something reconstructed from a discover sort.
+func (c *TMDBClient) Discover(q DiscoverQuery) ([]TMDBResult, error) {
 	if c == nil || c.apiKey == "" {
 		return nil, fmt.Errorf("TMDB API key not configured")
 	}
-	if mediaType != "movie" && mediaType != "tv" {
-		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
+	if q.MediaType != "movie" && q.MediaType != "tv" {
+		return nil, fmt.Errorf("unsupported media type: %s", q.MediaType)
 	}
+	// A genre from the other media type would return an empty list, which looks
+	// like "no results" rather than "wrong filter", so it is rejected instead.
+	if q.GenreID > 0 && !genreValidFor(q.MediaType, q.GenreID) {
+		return nil, fmt.Errorf("genre %d is not a %s genre", q.GenreID, q.MediaType)
+	}
+	page := q.Page
 	if page < 1 {
 		page = 1
 	}
@@ -446,29 +503,36 @@ func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int, sort 
 	params.Set("page", strconv.Itoa(page))
 
 	var endpoint string
-	if genreID > 0 || sort == SortDate {
-		field := dateField(mediaType)
-		if sort == SortDate {
+	if q.hasFilters() {
+		field := dateField(q.MediaType)
+		switch q.Sort {
+		case SortDate:
 			params.Set("sort_by", field+".desc")
 			// Never show future-dated titles: a release that has not aired has no
-			// resources to search for, so it would only be noise in a "new
-			// releases" list.
+			// resources to search for, so it would only be noise in a "newest"
+			// list.
 			params.Set(field+".lte", time.Now().Format("2006-01-02"))
 			// A vote floor would hide most of the current season, which is
-			// precisely what this view is for.
+			// precisely what this ordering is for.
 			params.Set("vote_count.gte", "0")
-		} else {
+		default:
 			params.Set("sort_by", "popularity.desc")
 			// Do not exclude titles that have not been rated yet — TMDB's default
-			// vote filter hides most anime from the current season.
+			// vote filter hides most recent releases.
 			params.Set("vote_count.gte", "10")
 		}
-		if genreID > 0 {
-			params.Set("with_genres", strconv.Itoa(genreIDFor(genreID, mediaType)))
+		if q.GenreID > 0 {
+			params.Set("with_genres", strconv.Itoa(q.GenreID))
 		}
-		endpoint = "https://api.themoviedb.org/3/discover/" + mediaType + "?" + params.Encode()
+		if q.Year > 0 {
+			// The year is expressed as a date range, because TMDB has no year
+			// parameter: one field, first day to last day of that year.
+			params.Set(field+".gte", fmt.Sprintf("%d-01-01", q.Year))
+			params.Set(field+".lte", fmt.Sprintf("%d-12-31", q.Year))
+		}
+		endpoint = "https://api.themoviedb.org/3/discover/" + q.MediaType + "?" + params.Encode()
 	} else {
-		endpoint = "https://api.themoviedb.org/3/trending/" + mediaType + "/week?" + params.Encode()
+		endpoint = "https://api.themoviedb.org/3/trending/" + q.MediaType + "/week?" + params.Encode()
 	}
 
 	resp, err := c.http.Get(endpoint)
@@ -485,7 +549,7 @@ func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int, sort 
 		return nil, err
 	}
 	for i := range sr.Results {
-		sr.Results[i].MediaType = mediaType
+		sr.Results[i].MediaType = q.MediaType
 	}
 	return sr.Results, nil
 }
