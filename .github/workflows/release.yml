@@ -1,18 +1,90 @@
 name: Release
 
+# Every tag publishes a prerelease first.
+#
+# A release is visible to users the moment it is published: the panel's update
+# check reads /releases/latest, Docker users pull :latest, and both would hand
+# out a build nobody has run yet. Publishing as a prerelease keeps it out of all
+# of those paths while the binaries are downloadable for testing.
+#
+# Promote a verified version with:
+#   gh release edit vX.Y.Z --prerelease=false --latest
+# The docker job below re-tags :latest only when the release is not a
+# prerelease, so promoting means re-running that job (workflow_dispatch) — see
+# the note on the docker job.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Tag to promote to a stable release (e.g. v2.0.30)'
+        required: true
+        type: string
 
 permissions:
   contents: write
   packages: write
 
 jobs:
+  # Promote an existing prerelease to a stable one. Runs instead of a build when
+  # the workflow is dispatched with a tag.
+  promote:
+    name: Promote to stable
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.promote }}
+        run: |
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag given"
+            exit 1
+          fi
+          # Refuse to promote something that has no assets: an empty release is
+          # almost always a failed build, and marking it stable would point
+          # /releases/latest at nothing.
+          assets=$(gh release view "$TAG" --json assets --jq '.assets | length')
+          echo "$TAG has $assets asset(s)"
+          if [ "$assets" -lt 2 ]; then
+            echo "::error::$TAG has fewer than 2 assets; refusing to promote"
+            exit 1
+          fi
+          gh release edit "$TAG" --prerelease=false --latest
+          echo "promoted $TAG to a stable release"
+
+      # :latest is what an unattended `docker pull` gets, so it only moves once
+      # the release is stable. Moving a tag means re-pushing the same image under
+      # the new name, which the registry accepts as a manifest copy.
+      - name: Move :latest to the promoted tag
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.promote }}
+        run: |
+          set -euo pipefail
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+
+          docker pull "$DOCKER_USERNAME/pan-fetcher:$TAG"
+          docker tag  "$DOCKER_USERNAME/pan-fetcher:$TAG" "$DOCKER_USERNAME/pan-fetcher:latest"
+          docker push "$DOCKER_USERNAME/pan-fetcher:latest"
+
+          docker pull "ghcr.io/$GHCR_OWNER/pan-fetcher:$TAG"
+          docker tag  "ghcr.io/$GHCR_OWNER/pan-fetcher:$TAG" "ghcr.io/$GHCR_OWNER/pan-fetcher:latest"
+          docker push "ghcr.io/$GHCR_OWNER/pan-fetcher:latest"
+
+          echo "moved :latest to $TAG"
+
   # Create the GitHub Release first, then let the build jobs attach assets.
   create-release:
     name: Create Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.release.outputs.upload_url }}
@@ -44,8 +116,15 @@ jobs:
             printf 'Release %s\n' "$GITHUB_REF_NAME" > /tmp/notes.md
           fi
 
+          # Say plainly that this is a prerelease, so someone who lands on the
+          # page does not assume it is the version to install.
+          {
+            printf '> **预览版** —— 尚未验证。测试无误后转为正式版。\n\n'
+            cat /tmp/notes.md
+          } > /tmp/notes-final.md
+
           echo "--- notes ---"
-          cat /tmp/notes.md
+          cat /tmp/notes-final.md
 
       - name: Create Release
         id: release
@@ -55,15 +134,19 @@ jobs:
           # No --cleanup-tag: the tag is what triggered this run, and deleting it
           # would leave the repository without the tag the release is named after.
           gh release delete "${{ github.ref_name }}" --yes 2>/dev/null || true
+          # Always a prerelease. Promotion is a separate, deliberate step.
           gh release create "${{ github.ref_name }}" \
-            --notes-file /tmp/notes.md \
-            --title "${{ github.ref_name }}" \
-            --prerelease=${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+            --notes-file /tmp/notes-final.md \
+            --title "${{ github.ref_name }} (预览版)" \
+            --prerelease
 
   build:
     name: linux-${{ matrix.goarch }}
     runs-on: ubuntu-latest
     needs: create-release
+    # Only on a tag push. A dispatched run is a promotion, and the assets already
+    # exist — rebuilding would produce a second set for the same release.
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +191,9 @@ jobs:
     name: Docker Image
     runs-on: ubuntu-latest
     needs: build
+    # Only on a tag push: the version tag is what this builds. :latest is moved
+    # separately by the promote job, once the release is stable.
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
@@ -124,13 +210,14 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The version tag is always pushed, so a prerelease can be pulled by its
+      # exact tag for testing. :latest is only moved on a promotion, because it is
+      # what an unattended `docker pull` gets.
       - name: Build and Push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/pan-fetcher:latest
             ${{ secrets.DOCKER_USERNAME }}/pan-fetcher:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/pan-fetcher:latest
             ghcr.io/${{ github.repository_owner }}/pan-fetcher:${{ github.ref_name }}
