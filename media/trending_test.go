@@ -90,7 +90,7 @@ func TestTrendingFilteredSendsTVGenreID(t *testing.T) {
 	}, &urls)
 
 	// 878 (Sci-Fi for films) must become 10765 for TV.
-	if _, err := c.TrendingFiltered("tv", 878, 1); err != nil {
+	if _, err := c.TrendingFiltered("tv", 878, 1, SortPopularity); err != nil {
 		t.Fatalf("TrendingFiltered: %v", err)
 	}
 	if got := urls[0].Query().Get("with_genres"); got != "10765" {
@@ -99,7 +99,7 @@ func TestTrendingFilteredSendsTVGenreID(t *testing.T) {
 
 	// The same genre for films keeps the film id.
 	urls = nil
-	if _, err := c.TrendingFiltered("movie", 878, 1); err != nil {
+	if _, err := c.TrendingFiltered("movie", 878, 1, SortPopularity); err != nil {
 		t.Fatalf("TrendingFiltered: %v", err)
 	}
 	if got := urls[0].Query().Get("with_genres"); got != "878" {
@@ -157,7 +157,7 @@ func TestTrendingFilteredUsesTrendingEndpoint(t *testing.T) {
 		})
 	}, &urls)
 
-	got, err := c.TrendingFiltered("movie", 0, 1)
+	got, err := c.TrendingFiltered("movie", 0, 1, SortPopularity)
 	if err != nil {
 		t.Fatalf("TrendingFiltered: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestTrendingFilteredUsesDiscoverWithGenre(t *testing.T) {
 		})
 	}, &urls)
 
-	if _, err := c.TrendingFiltered("tv", 16, 2); err != nil {
+	if _, err := c.TrendingFiltered("tv", 16, 2, SortPopularity); err != nil {
 		t.Fatalf("TrendingFiltered: %v", err)
 	}
 	if len(urls) != 1 {
@@ -215,7 +215,7 @@ func TestTrendingFilteredUsesDiscoverWithGenre(t *testing.T) {
 // request to a nonsense path.
 func TestTrendingFilteredRejectsUnknownMediaType(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {}, nil)
-	if _, err := c.TrendingFiltered("anime", 16, 1); err == nil {
+	if _, err := c.TrendingFiltered("anime", 16, 1, SortPopularity); err == nil {
 		t.Fatal("expected an error for an unsupported media type")
 	}
 }
@@ -227,7 +227,7 @@ func TestTrendingFilteredClampsPage(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
 	}, &urls)
 
-	if _, err := c.TrendingFiltered("movie", 0, 0); err != nil {
+	if _, err := c.TrendingFiltered("movie", 0, 0, SortPopularity); err != nil {
 		t.Fatalf("TrendingFiltered: %v", err)
 	}
 	if got := urls[0].Query().Get("page"); got != "1" {
@@ -243,7 +243,7 @@ func TestTrendingFilteredReportsHTTPError(t *testing.T) {
 		w.Write([]byte(`{"status_message":"invalid api key"}`))
 	}, nil)
 
-	if _, err := c.TrendingFiltered("movie", 16, 1); err == nil {
+	if _, err := c.TrendingFiltered("movie", 16, 1, SortPopularity); err == nil {
 		t.Fatal("expected an error for HTTP 401")
 	}
 }
@@ -252,7 +252,7 @@ func TestTrendingFilteredReportsHTTPError(t *testing.T) {
 // rather than issuing a request with an empty key.
 func TestTrendingFilteredRequiresKey(t *testing.T) {
 	c := &TMDBClient{}
-	if _, err := c.TrendingFiltered("movie", 16, 1); err == nil {
+	if _, err := c.TrendingFiltered("movie", 16, 1, SortPopularity); err == nil {
 		t.Fatal("expected an error without an API key")
 	}
 }

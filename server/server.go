@@ -2641,6 +2641,9 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 	if g, err := strconv.Atoi(r.URL.Query().Get("genre")); err == nil && g > 0 {
 		genreID = g
 	}
+	// sort is optional too; "date" switches to newest-first, which together with
+	// a genre gives the "new releases" view.
+	sort := media.ParseTrendingSort(r.URL.Query().Get("sort"))
 
 	type result struct {
 		TMDBID    int    `json:"id"`
@@ -2663,14 +2666,14 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 
 	var movies, tvShows []media.TMDBResult
 	var err error
-	if genreID > 0 {
-		// Filtering needs one request per media type, since a genre id alone does
-		// not tell movie and TV apart.
-		if movies, err = media.DefaultTMDB.TrendingFiltered("movie", genreID, page); err != nil {
+	if genreID > 0 || sort == media.SortDate {
+		// Both filtering and date ordering need one request per media type: the
+		// discover endpoint is per-type, and the date field differs between them.
+		if movies, err = media.DefaultTMDB.TrendingFiltered("movie", genreID, page, sort); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
 			return
 		}
-		if tvShows, err = media.DefaultTMDB.TrendingFiltered("tv", genreID, page); err != nil {
+		if tvShows, err = media.DefaultTMDB.TrendingFiltered("tv", genreID, page, sort); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
 			return
 		}
@@ -2685,6 +2688,7 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		"movies": convert(movies, "movie"),
 		"tv":     convert(tvShows, "tv"),
 		"genre":  genreID,
+		"sort":   string(sort),
 	})
 }
 

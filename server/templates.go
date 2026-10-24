@@ -1371,6 +1371,16 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
          the tabs above so the two levels stay distinguishable. */
       .trending-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 12px;}
       .trending-filters-label{font-size:11px;color:var(--muted);margin-right:2px;}
+      /* Shortcut to the new-anime view: a preset rather than a filter, so it is
+         set apart from the chips with a small gap and its own border. */
+      .trending-shortcut{
+        display:inline-flex;align-items:center;gap:4px;margin-left:auto;
+        padding:3px 10px;border-radius:14px;font-size:12px;cursor:pointer;
+        background:var(--card);border:1px dashed var(--line);color:var(--muted);
+        transition:color .12s,border-color .12s;
+      }
+      .trending-shortcut:hover{color:var(--accent);border-color:var(--accent);}
+      .trending-shortcut .ico{width:13px;height:13px;}
       .genre-chip{
         padding:3px 12px;border-radius:14px;font-size:12px;cursor:pointer;
         background:var(--bg);border:1px solid var(--line);color:var(--muted);
@@ -1420,6 +1430,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div class="search-tabs" style="margin-bottom:0;">
         <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}热门电影</div>
         <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}热门剧集</div>
+      </div>
+      <!-- Sort. "Newest" is the date-ordered view; with the Animation genre it
+           becomes the new-anime list, which is what the shortcut below sets. -->
+      <div class="trending-filters" id="trending-sorts">
+        <span class="trending-filters-label">{{index .T "trending_sort"}}</span>
+        <span class="genre-chip active" data-sort="popularity" onclick="selectTrendingSort('popularity')">{{index .T "trending_sort_popular"}}</span>
+        <span class="genre-chip" data-sort="date" onclick="selectTrendingSort('date')">{{index .T "trending_sort_new"}}</span>
+        <span class="trending-shortcut" id="trending-newanime" onclick="selectNewAnime()" title="{{index .T "trending_newanime_hint"}}">{{ico "tv"}}{{index .T "trending_newanime"}}</span>
       </div>
       <!-- Genre filter. TMDB's trending endpoints take no genre argument, so a
            selection switches the request to /discover sorted by popularity. -->
@@ -1657,6 +1675,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     var trendingMovies=[],trendingTV=[],trendingPage=1,trendingTab='movies';
     // Selected genre id: 0 means no filter (plain trending).
     var trendingGenre=0,trendingGenres=[];
+    // 'popularity' or 'date'; date gives the newest-first view.
+    var trendingSort='popularity';
 
     function switchTrendingTab(tab){
       if(trendingTab===tab&&trendingMovies.length)return;
@@ -1683,17 +1703,50 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       box.innerHTML=h;
     }
 
+    // reloadTrending clears the cached lists and refetches.
+    //
+    // Both the genre and the sort invalidate what is on screen: the cached rows
+    // belong to the previous query, and appending to them would mix two
+    // different orderings.
+    function reloadTrending(){
+      trendingMovies=[];trendingTV=[];trendingPage=1;
+      var grid=document.getElementById('trending-grid');
+      if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
+      loadTrending();
+    }
+
     function selectTrendingGenre(id){
       if(trendingGenre===id)return;
       trendingGenre=id;
       document.querySelectorAll('#trending-filters .genre-chip').forEach(function(c){
         c.classList.toggle('active',Number(c.getAttribute('data-genre'))===id);
       });
-      // The cached lists belong to the previous filter.
-      trendingMovies=[];trendingTV=[];trendingPage=1;
-      var grid=document.getElementById('trending-grid');
-      if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
-      loadTrending();
+      reloadTrending();
+    }
+
+    function selectTrendingSort(sort){
+      if(trendingSort===sort)return;
+      trendingSort=sort;
+      document.querySelectorAll('#trending-sorts .genre-chip').forEach(function(c){
+        c.classList.toggle('active',c.getAttribute('data-sort')===sort);
+      });
+      reloadTrending();
+    }
+
+    // selectNewAnime jumps to the new-anime view: Animation, newest first.
+    //
+    // It is a preset over the two filters rather than a separate mode, so the
+    // chips update to show what it selected and the user can adjust from there.
+    function selectNewAnime(){
+      trendingSort='date';
+      document.querySelectorAll('#trending-sorts .genre-chip').forEach(function(c){
+        c.classList.toggle('active',c.getAttribute('data-sort')==='date');
+      });
+      trendingGenre=16;
+      document.querySelectorAll('#trending-filters .genre-chip').forEach(function(c){
+        c.classList.toggle('active',Number(c.getAttribute('data-genre'))===16);
+      });
+      reloadTrending();
     }
 
     function renderTrendingCards(tab){
@@ -1717,10 +1770,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       if(moreBtn)moreBtn.style.display='';
     }
 
-    // trendingQuery builds the request for the current tab and filter.
+    // trendingQuery builds the request for the current tab, filter and ordering.
     function trendingQuery(page){
       var q='/api/tmdb/trending?page='+page;
       if(trendingGenre>0)q+='&genre='+trendingGenre;
+      if(trendingSort==='date')q+='&sort=date';
       return q;
     }
 

@@ -390,15 +390,46 @@ func genreIDFor(genreID int, mediaType string) int {
 	return genreID
 }
 
-// TrendingFiltered returns trending titles for one media type, optionally
-// restricted to a genre, with paging.
+// TrendingSort selects how discover results are ordered.
+type TrendingSort string
+
+const (
+	// SortPopularity orders by TMDB popularity. It is the default, and it is
+	// what "trending" means for a genre.
+	SortPopularity TrendingSort = "popularity"
+	// SortDate orders by release / first-air date, newest first. Combined with
+	// the Animation genre it becomes the "new anime" view.
+	SortDate TrendingSort = "date"
+)
+
+// ParseTrendingSort maps a query value onto a known sort.
 //
-// TMDB's /trending endpoints take no genre parameter, so filtering has to go
-// through /discover sorted by popularity — that is what "trending" means for a
-// genre: the most popular titles in it. Without a genre the trending endpoint is
-// used, because its ordering is TMDB's own popularity signal rather than
-// something reconstructed here.
-func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int) ([]TMDBResult, error) {
+// Anything unrecognised falls back to popularity rather than erroring: a bad
+// value should degrade to the default list, not leave the panel empty.
+func ParseTrendingSort(s string) TrendingSort {
+	if s == string(SortDate) {
+		return SortDate
+	}
+	return SortPopularity
+}
+
+// dateField is the discover parameter TMDB uses for a release date, which
+// differs between films and series.
+func dateField(mediaType string) string {
+	if mediaType == "tv" {
+		return "first_air_date"
+	}
+	return "primary_release_date"
+}
+
+// TrendingFiltered returns trending titles for one media type, optionally
+// restricted to a genre and ordered by popularity or by date, with paging.
+//
+// TMDB's /trending endpoints take neither a genre nor a sort parameter, so both
+// filtering and date ordering have to go through /discover. Without either, the
+// trending endpoint is used, because its ordering is TMDB's own popularity
+// signal rather than something reconstructed here.
+func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int, sort TrendingSort) ([]TMDBResult, error) {
 	if c == nil || c.apiKey == "" {
 		return nil, fmt.Errorf("TMDB API key not configured")
 	}
@@ -415,15 +446,26 @@ func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int) ([]TM
 	params.Set("page", strconv.Itoa(page))
 
 	var endpoint string
-	if genreID > 0 {
-		// Popularity is the closest analogue to "trending" for a genre, and it is
-		// what makes the filter useful: an unsorted discover call returns
-		// near-arbitrary titles.
-		params.Set("with_genres", strconv.Itoa(genreIDFor(genreID, mediaType)))
-		params.Set("sort_by", "popularity.desc")
-		// Do not exclude titles that have not been rated yet — TMDB's default
-		// vote filter hides most anime from the current season.
-		params.Set("vote_count.gte", "10")
+	if genreID > 0 || sort == SortDate {
+		field := dateField(mediaType)
+		if sort == SortDate {
+			params.Set("sort_by", field+".desc")
+			// Never show future-dated titles: a release that has not aired has no
+			// resources to search for, so it would only be noise in a "new
+			// releases" list.
+			params.Set(field+".lte", time.Now().Format("2006-01-02"))
+			// A vote floor would hide most of the current season, which is
+			// precisely what this view is for.
+			params.Set("vote_count.gte", "0")
+		} else {
+			params.Set("sort_by", "popularity.desc")
+			// Do not exclude titles that have not been rated yet — TMDB's default
+			// vote filter hides most anime from the current season.
+			params.Set("vote_count.gte", "10")
+		}
+		if genreID > 0 {
+			params.Set("with_genres", strconv.Itoa(genreIDFor(genreID, mediaType)))
+		}
 		endpoint = "https://api.themoviedb.org/3/discover/" + mediaType + "?" + params.Encode()
 	} else {
 		endpoint = "https://api.themoviedb.org/3/trending/" + mediaType + "/week?" + params.Encode()
