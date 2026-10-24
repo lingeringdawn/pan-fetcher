@@ -2134,9 +2134,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		var changes []string
 
 		// Proxy
-		if v := strings.TrimSpace(r.FormValue("proxy_http")); v != s.ProxyHTTP {
-			s.ProxyHTTP = v
-			changes = append(changes, fmt.Sprintf("proxy=%s", v))
+		if has("proxy_http") {
+			if v := strings.TrimSpace(r.FormValue("proxy_http")); v != s.ProxyHTTP {
+				s.ProxyHTTP = v
+				changes = append(changes, fmt.Sprintf("proxy=%s", v))
+			}
 		}
 		// Chunk delay
 		if v, err := strconv.Atoi(r.FormValue("chunk_delay")); err == nil && v > 0 && v != ws.ChunkDelay {
@@ -2163,14 +2165,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			ws.SubsInterval = v
 			changes = append(changes, fmt.Sprintf("subs_interval=%d", v))
 		}
-		// Web password (allow clearing by saving empty)
-		if pw := sanitizePassword(r.FormValue("web_password")); pw != ws.WebPassword {
-			webPassword = pw
-			ws.WebPassword = pw
-			if pw == "" {
-				changes = append(changes, "web_password=cleared")
-			} else {
-				changes = append(changes, "web_password=***")
+		// Web password.
+		//
+		// Guarded by has(): FormValue returns "" both for an empty field and for
+		// a field that was never submitted, so without the guard any partial POST
+		// silently cleared the password. That is what happened when the settings
+		// page submitted a form that no longer carried the field — the panel came
+		// back with authentication disabled.
+		if has("web_password") {
+			if pw := sanitizePassword(r.FormValue("web_password")); pw != ws.WebPassword {
+				webPassword = pw
+				ws.WebPassword = pw
+				if pw == "" {
+					changes = append(changes, "web_password=cleared")
+				} else {
+					changes = append(changes, "web_password=***")
+				}
 			}
 		}
 		// WeChat Work webhook.
@@ -2187,17 +2197,24 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.ReloadNotifyChannels()
 			changes = append(changes, "wework_webhook="+maskWebhook(v))
 		}
-		if v := r.FormValue("notify_log") == "1"; v != ws.NotifyLog {
-			ws.NotifyLog = v
-			notify.SetLogEnabled(v)
-			changes = append(changes, fmt.Sprintf("notify_log=%v", v))
+		// Checkboxes only appear in the POST body when checked, so presence has
+		// to be decided by the form marker the settings page always submits.
+		// Without it a partial POST would read "" and turn the option off.
+		if has("settings_submitted") {
+			if v := r.FormValue("notify_log") == "1"; v != ws.NotifyLog {
+				ws.NotifyLog = v
+				notify.SetLogEnabled(v)
+				changes = append(changes, fmt.Sprintf("notify_log=%v", v))
+			}
 		}
 		// Timezone
-		if v := strings.TrimSpace(r.FormValue("timezone")); v != ws.Timezone {
-			ws.Timezone = v
-			SetTimezone(v)
-			notify.SetTimezone(v)
-			changes = append(changes, fmt.Sprintf("timezone=%s", v))
+		if has("timezone") {
+			if v := strings.TrimSpace(r.FormValue("timezone")); v != ws.Timezone {
+				ws.Timezone = v
+				SetTimezone(v)
+				notify.SetTimezone(v)
+				changes = append(changes, fmt.Sprintf("timezone=%s", v))
+			}
 		}
 		// Jackett
 		if has("jackett_mode") {
@@ -2259,9 +2276,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			changes = append(changes, fmt.Sprintf("page_size=%d", v))
 		}
 		// Auto update
-		if v := r.FormValue("auto_update") == "1"; v != ws.AutoUpdate {
-			ws.AutoUpdate = v
-			changes = append(changes, fmt.Sprintf("auto_update=%v", v))
+		if has("settings_submitted") {
+			if v := r.FormValue("auto_update") == "1"; v != ws.AutoUpdate {
+				ws.AutoUpdate = v
+				changes = append(changes, fmt.Sprintf("auto_update=%v", v))
+			}
 		}
 
 		if len(changes) > 0 {

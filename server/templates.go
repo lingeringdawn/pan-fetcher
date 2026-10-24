@@ -2859,6 +2859,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       </script>
       <!-- settings form -->
       <form action="/settings" method="post">
+        <!-- Marks that this is the full settings form, so an unchecked checkbox
+             below is read as "off" rather than "not submitted". Partial posts
+             (the Jackett discovery flow) omit it and leave those fields alone. -->
+        <input type="hidden" name="settings_submitted" value="1">
         <!-- Group: System -->
         <fieldset style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
           <legend style="font-weight:600;font-size:14px;padding:0 8px;">{{ico "settings2"}}{{index .T "system_label"}}</legend>
