@@ -455,6 +455,39 @@ func dateField(mediaType string) string {
 	return "primary_release_date"
 }
 
+// TrendingLanguage is a language a caller can filter the discover lists by.
+//
+// The code is TMDB's ISO 639-1 original_language value. Only the languages this
+// project's audience actually looks for are offered; the full list is over a
+// hundred entries and useless as a chip row.
+type TrendingLanguage struct {
+	Code string
+	Name string
+}
+
+// TrendingLanguages returns the languages offered as filters, most useful first.
+func TrendingLanguages() []TrendingLanguage {
+	return []TrendingLanguage{
+		{"ja", "日语"},
+		{"zh", "中文"},
+		{"en", "英语"},
+		{"ko", "韩语"},
+	}
+}
+
+// LanguageValid reports whether code is one of the offered languages.
+//
+// Exported because the HTTP layer validates the query parameter before deciding
+// whether the request counts as filtered.
+func LanguageValid(code string) bool {
+	for _, l := range TrendingLanguages() {
+		if l.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 // DiscoverQuery describes one request to the discover lists.
 type DiscoverQuery struct {
 	// MediaType is "movie" or "tv".
@@ -465,15 +498,17 @@ type DiscoverQuery struct {
 	Sort TrendingSort
 	// Year restricts to one release / first-air year; 0 means any.
 	Year int
-	Page int
+	// Language restricts to one original language; "" means any.
+	Language string
+	Page     int
 }
 
 // hasFilters reports whether the query needs the discover endpoint.
 //
-// TMDB's /trending takes neither a genre, a sort nor a year, so any of them means
-// the query has to go through /discover instead.
+// TMDB's /trending takes none of genre, sort, year or language, so any of them
+// means the query has to go through /discover instead.
 func (q DiscoverQuery) hasFilters() bool {
-	return q.GenreID > 0 || q.Sort == SortDate || q.Year > 0
+	return q.GenreID > 0 || q.Sort == SortDate || q.Year > 0 || q.Language != ""
 }
 
 // Discover returns one page of titles matching the query.
@@ -491,6 +526,11 @@ func (c *TMDBClient) Discover(q DiscoverQuery) ([]TMDBResult, error) {
 	// like "no results" rather than "wrong filter", so it is rejected instead.
 	if q.GenreID > 0 && !genreValidFor(q.MediaType, q.GenreID) {
 		return nil, fmt.Errorf("genre %d is not a %s genre", q.GenreID, q.MediaType)
+	}
+	// Same reasoning for the language: an unknown code is a caller bug, not an
+	// empty result.
+	if q.Language != "" && !LanguageValid(q.Language) {
+		return nil, fmt.Errorf("unsupported language: %s", q.Language)
 	}
 	page := q.Page
 	if page < 1 {
@@ -529,6 +569,12 @@ func (c *TMDBClient) Discover(q DiscoverQuery) ([]TMDBResult, error) {
 			// parameter: one field, first day to last day of that year.
 			params.Set(field+".gte", fmt.Sprintf("%d-01-01", q.Year))
 			params.Set(field+".lte", fmt.Sprintf("%d-12-31", q.Year))
+		}
+		if q.Language != "" {
+			// original_language is the language a title was made in, not the
+			// language of its metadata — the latter follows the `language`
+			// parameter above.
+			params.Set("with_original_language", q.Language)
 		}
 		endpoint = "https://api.themoviedb.org/3/discover/" + q.MediaType + "?" + params.Encode()
 	} else {

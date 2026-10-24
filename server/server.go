@@ -1546,6 +1546,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tmdb/search", s.authCheck(s.handleTMDBSearch))
 	mux.HandleFunc("/api/tmdb/trending", s.authCheck(s.handleTMDBTrending))
 	mux.HandleFunc("/api/tmdb/genres", s.authCheck(s.handleTMDBGenres))
+	mux.HandleFunc("/api/tmdb/languages", s.authCheck(s.handleTMDBLanguages))
 	mux.HandleFunc("/api/tmdb/detail", s.authCheck(s.handleTMDBDetail))
 	mux.HandleFunc("/api/lang", s.authCheck(s.handleAPILang))
 }
@@ -2645,6 +2646,12 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 	if y, err := strconv.Atoi(r.URL.Query().Get("year")); err == nil && y > 1800 && y < 2200 {
 		year = y
 	}
+	// lang is the original language; an unknown code is dropped rather than
+	// rejected so a stale bookmark still shows something.
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang != "" && !media.LanguageValid(lang) {
+		lang = ""
+	}
 	sort := media.ParseTrendingSort(r.URL.Query().Get("sort"))
 
 	type result struct {
@@ -2666,7 +2673,7 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 
-	filtered := genreID > 0 || sort == media.SortDate || year > 0
+	filtered := genreID > 0 || sort == media.SortDate || year > 0 || lang != ""
 	var movies, tvShows []media.TMDBResult
 	var err error
 	if filtered {
@@ -2676,7 +2683,7 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		// show the film list, with the TV side simply empty.
 		if genreID == 0 || genreValidForMedia("movie", genreID) {
 			movies, err = media.DefaultTMDB.Discover(media.DiscoverQuery{
-				MediaType: "movie", GenreID: genreID, Sort: sort, Year: year, Page: page,
+				MediaType: "movie", GenreID: genreID, Sort: sort, Year: year, Language: lang, Page: page,
 			})
 			if err != nil {
 				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
@@ -2685,7 +2692,7 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		}
 		if genreID == 0 || genreValidForMedia("tv", genreID) {
 			tvShows, err = media.DefaultTMDB.Discover(media.DiscoverQuery{
-				MediaType: "tv", GenreID: genreID, Sort: sort, Year: year, Page: page,
+				MediaType: "tv", GenreID: genreID, Sort: sort, Year: year, Language: lang, Page: page,
 			})
 			if err != nil {
 				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
@@ -2705,6 +2712,7 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		"genre":  genreID,
 		"sort":   string(sort),
 		"year":   year,
+		"lang":   lang,
 	})
 }
 
@@ -2744,6 +2752,16 @@ func (s *Server) handleTMDBGenres(w http.ResponseWriter, r *http.Request) {
 			"tv":    convert(media.TrendingGenres("tv")),
 		})
 	}
+}
+
+// handleTMDBLanguages lists the original-language filters.
+func (s *Server) handleTMDBLanguages(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	out := make([]map[string]interface{}, 0, len(media.TrendingLanguages()))
+	for _, l := range media.TrendingLanguages() {
+		out = append(out, map[string]interface{}{"code": l.Code, "name": l.Name})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"languages": out})
 }
 
 func (s *Server) handleTMDBDetail(w http.ResponseWriter, r *http.Request) {

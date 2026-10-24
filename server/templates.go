@@ -1412,15 +1412,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     </div>
 
     <!-- Discover section.
-         The heading is deliberately neutral: the list below it is no longer only
-         "trending", since a sort control switches between popular and newest.
-         Sorting is a top-level tab beside the media type, because it changes what
-         the whole list means; the genre row is a refinement of that. -->
+         No heading: the tabs and filter rows below say what this is, and a title
+         above them only repeated the page name. -->
     <div id="trending-section" style="margin-top:24px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-        <h3 style="margin:0;font-size:16px;">{{ico "tmdb"}}{{index .T "trending_title"}}</h3>
-        <span style="font-size:11px;color:var(--muted);" id="trending-subtitle">{{index .T "trending_sub_popular"}}</span>
-      </div>
       <div class="search-tabs" style="margin-bottom:0;">
         <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}{{index .T "trending_tab_movies"}}</div>
         <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}{{index .T "trending_tab_tv"}}</div>
@@ -1443,6 +1437,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div class="trending-filters" id="trending-filters">
         <span class="trending-filters-label">{{index .T "trending_genre"}}</span>
         <!-- Filled by JS from /api/tmdb/genres, with "all" always first. -->
+      </div>
+      <!-- Language filter, by original language. -->
+      <div class="trending-filters" id="trending-langs">
+        <span class="trending-filters-label">{{index .T "trending_lang"}}</span>
+        <!-- Filled by JS from /api/tmdb/genres?type=… (languages ride along). -->
       </div>
       <div class="tmdb-grid" id="trending-grid" style="min-height:120px;">
         <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">{{icoSpin}}</div>
@@ -1678,6 +1677,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     var trendingSort='popularity';
     // Selected release year: 0 means any year.
     var trendingYear=0;
+    // Selected original language; '' means any.
+    var trendingLang='';
+    var trendingLangs=[];
 
     function switchTrendingTab(tab){
       if(trendingTab===tab&&trendingMovies.length)return;
@@ -1714,26 +1716,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         h+='<span class="genre-chip'+(trendingGenre===g.id?' active':'')+'" data-genre="'+g.id+'" onclick="selectTrendingGenre('+g.id+')">'+escHTML(g.name)+'</span>';
       });
       box.innerHTML=h;
-      updateTrendingSubtitle();
     }
 
-    // updateTrendingSubtitle keeps the line beside the heading in step with the
-    // current selection, so the list is never ambiguous: it says how the results
-    // are ordered, and which genre and year narrow them.
-    function updateTrendingSubtitle(){
-      var el=document.getElementById('trending-subtitle');
-      if(!el)return;
-      var parts=[trendingSort==='date'
-        ?'{{index .T "trending_sub_new"}}'
-        :'{{index .T "trending_sub_popular"}}'];
-      if(trendingGenre>0){
-        for(var i=0;i<trendingGenres.length;i++){
-          if(trendingGenres[i].id===trendingGenre){parts.push(trendingGenres[i].name);break;}
-        }
-      }
-      if(trendingYear>0)parts.push(String(trendingYear));
-      el.textContent=parts.join(' · ');
-    }
 
     // reloadTrending clears the cached lists and refetches.
     //
@@ -1742,7 +1726,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     // different orderings.
     function reloadTrending(){
       trendingMovies=[];trendingTV=[];trendingPage=1;
-      updateTrendingSubtitle();
       var grid=document.getElementById('trending-grid');
       if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
       loadTrending();
@@ -1775,6 +1758,33 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       reloadTrending();
     }
 
+    function selectTrendingLang(code){
+      if(trendingLang===code)return;
+      trendingLang=code;
+      document.querySelectorAll('#trending-langs .genre-chip').forEach(function(c){
+        c.classList.toggle('active',c.getAttribute('data-lang')===code);
+      });
+      reloadTrending();
+    }
+
+    // loadTrendingLangs fills the language row. The list is short and fixed, so
+    // it is fetched once.
+    async function loadTrendingLangs(){
+      var box=document.getElementById('trending-langs');
+      if(!box)return;
+      try{
+        var r=await fetch('/api/tmdb/languages');
+        var j=await r.json();
+        trendingLangs=j.languages||[];
+      }catch(e){ trendingLangs=[]; }
+      var h='<span class="trending-filters-label">{{index .T "trending_lang"}}</span>';
+      h+='<span class="genre-chip'+(trendingLang===''?' active':'')+'" data-lang="" onclick="selectTrendingLang(\'\')">{{index .T "trending_lang_all"}}</span>';
+      trendingLangs.forEach(function(l){
+        h+='<span class="genre-chip'+(trendingLang===l.code?' active':'')+'" data-lang="'+l.code+'" onclick="selectTrendingLang(\''+l.code+'\')">'+escHTML(l.name)+'</span>';
+      });
+      box.innerHTML=h;
+    }
+
     function renderTrendingCards(tab){
       var items=tab==='movies'?trendingMovies:trendingTV;
       var grid=document.getElementById('trending-grid');
@@ -1802,6 +1812,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       if(trendingGenre>0)q+='&genre='+trendingGenre;
       if(trendingSort==='date')q+='&sort=date';
       if(trendingYear>0)q+='&year='+trendingYear;
+      if(trendingLang)q+='&lang='+trendingLang;
       return q;
     }
 
@@ -1872,6 +1883,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     }
 
     renderTrendingYears();
+    loadTrendingLangs();
     loadTrendingGenres();
     loadTrending();
     var trendingObserver=new IntersectionObserver(function(entries){

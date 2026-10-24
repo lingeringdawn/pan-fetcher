@@ -94,17 +94,23 @@ func TestTrendingGenreWiring(t *testing.T) {
 		`id="trending-filters"`,    // container the genre chips render into
 		`id="trending-sorts"`,      // sort chips
 		`id="trending-years"`,      // year chips
+		`id="trending-langs"`,      // language chips
 		"loadTrendingGenres()",     // fills the genre row
 		"renderTrendingYears()",    // fills the year row
+		"loadTrendingLangs()",      // fills the language row
 		"selectTrendingGenre(",     // genre click handler
 		"selectTrendingSort(",      // sort click handler
 		"selectTrendingYear(",      // year click handler
+		"selectTrendingLang(",      // language click handler
 		"trendingGenre",            // genre state
 		"trendingSort",             // sort state
 		"trendingYear",             // year state
+		"trendingLang",             // language state
 		"'/api/tmdb/genres?type='", // genre list request, per media type
+		"'/api/tmdb/languages'",    // language list request
 		"'&genre='+trendingGenre",  // genre applied to the request
 		"'&year='+trendingYear",    // year applied to the request
+		"'&lang='+trendingLang",    // language applied to the request
 		"trendingQuery(",           // single place that builds the request
 	} {
 		if !strings.Contains(src, needle) {
@@ -113,7 +119,7 @@ func TestTrendingGenreWiring(t *testing.T) {
 	}
 
 	// The loaders must actually be invoked, not just defined.
-	for _, call := range []string{"loadTrendingGenres()", "renderTrendingYears()"} {
+	for _, call := range []string{"loadTrendingGenres()", "renderTrendingYears()", "loadTrendingLangs()"} {
 		if !regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(call) + `;`).MatchString(src) {
 			t.Errorf("%s is defined but never called, so its chips never appear", call)
 		}

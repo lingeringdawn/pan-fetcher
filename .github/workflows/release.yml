@@ -10,8 +10,7 @@ permissions:
   packages: write
 
 jobs:
-  # Create the GitHub Release first with annotated tag message as body.
-  # Build jobs then only upload assets without overwriting the body.
+  # Create the GitHub Release first, then let the build jobs attach assets.
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
@@ -19,14 +18,45 @@ jobs:
       upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
       - uses: actions/checkout@v4
+
+      # Build the release notes from CHANGELOG.md rather than from the annotated
+      # tag.
+      #
+      # --notes-from-tag used to be used here, but it reads the tag object, and a
+      # tag that is created before the final commit lands (or re-pointed) ends up
+      # describing the wrong commit: releases were published with a body of
+      # "docs: CHANGELOG 记录 vX.Y.Z" instead of the actual notes. CHANGELOG.md is
+      # the source of truth for what changed, so the section for this tag is
+      # extracted from it.
+      - name: Extract release notes
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Take everything under "## vX.Y.Z" up to the next "## " heading.
+          awk -v ver="$version" '
+            $0 ~ "^## v?" ver "([^0-9.]|$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/notes.md
+
+          if [ ! -s /tmp/notes.md ]; then
+            echo "::warning::no CHANGELOG section for $version; falling back to the tag message"
+            printf 'Release %s\n' "$GITHUB_REF_NAME" > /tmp/notes.md
+          fi
+
+          echo "--- notes ---"
+          cat /tmp/notes.md
+
       - name: Create Release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "${{ github.ref_name }}" --yes --cleanup-tag 2>/dev/null || true
+          # No --cleanup-tag: the tag is what triggered this run, and deleting it
+          # would leave the repository without the tag the release is named after.
+          gh release delete "${{ github.ref_name }}" --yes 2>/dev/null || true
           gh release create "${{ github.ref_name }}" \
-            --notes-from-tag \
+            --notes-file /tmp/notes.md \
             --title "${{ github.ref_name }}" \
             --prerelease=${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
 

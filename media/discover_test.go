@@ -308,6 +308,116 @@ func TestRequiresKey(t *testing.T) {
 	}
 }
 
+// --- language ---
+
+// TestTrendingLanguages pins the offered language filters.
+//
+// The codes are TMDB's original_language values; a wrong one returns nothing
+// rather than an error, which reads as "no titles in this language".
+func TestTrendingLanguages(t *testing.T) {
+	want := map[string]string{
+		"ja": "日语", "zh": "中文", "en": "英语", "ko": "韩语",
+	}
+	got := TrendingLanguages()
+	if len(got) != len(want) {
+		t.Fatalf("got %d languages, want %d", len(got), len(want))
+	}
+	for _, l := range got {
+		name, ok := want[l.Code]
+		if !ok {
+			t.Errorf("unexpected language code %q", l.Code)
+			continue
+		}
+		if l.Name != name {
+			t.Errorf("language %q name = %q, want %q", l.Code, l.Name, name)
+		}
+	}
+	// Japanese first: it is what this project's audience filters for most.
+	if got[0].Code != "ja" {
+		t.Errorf("first language should be ja, got %q", got[0].Code)
+	}
+}
+
+// TestLanguageValid verifies unknown codes are rejected.
+func TestLanguageValid(t *testing.T) {
+	for _, ok := range []string{"ja", "zh", "en", "ko"} {
+		if !LanguageValid(ok) {
+			t.Errorf("LanguageValid(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "fr", "JA", "japanese"} {
+		if LanguageValid(bad) {
+			t.Errorf("LanguageValid(%q) = true, want false", bad)
+		}
+	}
+}
+
+// TestLanguageFilterUsesOriginalLanguage verifies the parameter sent.
+//
+// with_original_language is the language a title was made in, which is not the
+// same as the `language` parameter that controls metadata translation.
+func TestLanguageFilterUsesOriginalLanguage(t *testing.T) {
+	var urls []*url.URL
+	c := newTestClient(t, emptyResults, &urls)
+
+	if _, err := c.Discover(DiscoverQuery{MediaType: "tv", Language: "ja"}); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	q := urls[0].Query()
+	if got := q.Get("with_original_language"); got != "ja" {
+		t.Errorf("with_original_language = %q, want ja", got)
+	}
+	// The metadata language must stay zh-CN, not follow the filter.
+	if got := q.Get("language"); got != "zh-CN" {
+		t.Errorf("language = %q, want zh-CN (metadata translation, not the filter)", got)
+	}
+}
+
+// TestLanguageSwitchesToDiscover verifies a language alone needs discover, since
+// /trending takes no such parameter.
+func TestLanguageSwitchesToDiscover(t *testing.T) {
+	var urls []*url.URL
+	c := newTestClient(t, emptyResults, &urls)
+
+	if _, err := c.Discover(DiscoverQuery{MediaType: "movie", Language: "ja"}); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if got := urls[0].Path; got != "/3/discover/movie" {
+		t.Errorf("path = %q, want /3/discover/movie", got)
+	}
+}
+
+// TestRejectsUnknownLanguage verifies a bad code is an error, not an empty list.
+func TestRejectsUnknownLanguage(t *testing.T) {
+	c := newTestClient(t, emptyResults, nil)
+	if _, err := c.Discover(DiscoverQuery{MediaType: "movie", Language: "fr"}); err == nil {
+		t.Fatal("expected an error for an unsupported language")
+	}
+}
+
+// TestAllFiltersCombine verifies every filter is sent together.
+func TestAllFiltersCombine(t *testing.T) {
+	var urls []*url.URL
+	c := newTestClient(t, emptyResults, &urls)
+
+	if _, err := c.Discover(DiscoverQuery{
+		MediaType: "tv", GenreID: 16, Sort: SortDate, Year: 2025, Language: "ja",
+	}); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	q := urls[0].Query()
+	for key, want := range map[string]string{
+		"with_genres":            "16",
+		"sort_by":                "first_air_date.desc",
+		"first_air_date.gte":     "2025-01-01",
+		"with_original_language": "ja",
+	} {
+		if got := q.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
 // emptyResults is the handler used by tests that only inspect the request.
 func emptyResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
