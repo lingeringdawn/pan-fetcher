@@ -38,6 +38,69 @@ func detachedSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }
 
+// detachToOwnScope moves pid out of the current systemd cgroup.
+//
+// setsid gives Jackett its own session but leaves it inside
+// pan-fetcher.service's cgroup. systemd kills the whole cgroup when the unit
+// stops — including the post-stop sweep when KillMode is not control-group — so
+// restarting pan-fetcher would also kill Jackett.
+//
+// The fix is to start the process as its own transient scope, which systemd
+// places in a different slice. Writing the pid to systemd-run's scope manager is
+// the supported way to do that from inside a running unit.
+//
+// Everything here is best-effort: if systemd-run is unavailable, or the process
+// is already gone, or we are not running under systemd at all, the caller simply
+// keeps the previous behaviour. It reports an error only so the log can say that
+// Jackett may not survive a restart.
+func detachToOwnScope(pid int, logStep func(string, ...interface{})) error {
+	if pid <= 0 {
+		return fmt.Errorf("无效的 PID %d", pid)
+	}
+	if !wantsScopeDetach() {
+		// Not under systemd: there is no cgroup sweep to escape, and setsid
+		// already made the process independent.
+		return nil
+	}
+	runner, err := exec.LookPath("systemd-run")
+	if err != nil {
+		return fmt.Errorf("未找到 systemd-run")
+	}
+
+	unit := fmt.Sprintf("jackett-detached-%d", pid)
+	// Attach the existing pid rather than launching it again: --scope with
+	// --pid makes systemd adopt the running process into a new unit.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, runner,
+		"--scope", "--quiet", "--collect",
+		"--unit", unit,
+		"--pid", strconv.Itoa(pid),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("systemd-run 失败: %v (%s)", err, tailOf(strings.TrimSpace(string(out)), 200))
+	}
+	logStep("已将 Jackett 移入独立单元 %s，重启 pan-fetcher 不会影响它", unit)
+	return nil
+}
+
+// wantsScopeDetach reports whether this process is supervised by systemd, in
+// which case a child needs to be moved out of the unit's cgroup to survive a
+// restart.
+//
+// INVOCATION_ID is set by systemd for every unit invocation; the cgroup path is
+// the fallback for older versions.
+func wantsScopeDetach() bool {
+	if os.Getenv("INVOCATION_ID") != "" {
+		return true
+	}
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), ".service")
+}
+
 // InstallResult reports what an install attempt produced.
 type InstallResult struct {
 	// Installed is true when a Jackett executable was extracted to disk.
@@ -525,6 +588,21 @@ func Start(ctx context.Context, dir, url string, logf func(string, ...interface{
 	}
 	pid := cmd.Process.Pid
 	logStep("已启动 Jackett (pid=%d)", pid)
+
+	// Move the child out of pan-fetcher's cgroup, when we are under systemd.
+	//
+	// setsid detaches the session but not the cgroup: the process still belongs
+	// to pan-fetcher.service, and systemd sweeps the whole cgroup on stop (that
+	// is what KillMode=control-group and the post-stop cleanup both do). Without
+	// this, restarting pan-fetcher takes Jackett down with it — the exact
+	// problem this project already hit once.
+	//
+	// Starting it as its own transient scope hands it to a different slice, so
+	// stopping pan-fetcher no longer reaches it.
+	if err := detachToOwnScope(pid, logStep); err != nil {
+		logStep("未能将 Jackett 移出本服务的 cgroup（重启 pan-fetcher 时会一并停止）: %v", err)
+	}
+
 	// Record the PID so Stop can find the process later. Best-effort: failing to
 	// persist it only disables the stop button.
 	_ = os.WriteFile(filepath.Join(dir, "jackett.pid"), []byte(fmt.Sprintf("%d", pid)), 0o644)

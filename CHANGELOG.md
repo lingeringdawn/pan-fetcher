@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.23
+
+### 修复
+- **更新状态提示里显示原始 `<svg>` 标签**：设置页的「已是最新版本」「获取更新失败」「网络错误」等提示把图标赋给了 `textContent`。`textContent` 会转义参数，于是 SVG 变成纯文本显示出来。共 6 处，已改为 `innerHTML`。
+- **自更新后进入重启死循环**：前一个版本为避免重启 pan-fetcher 时连带杀死 Jackett，把 unit 设成了 `KillMode=process`。但该模式也让 **pan-fetcher 自己的替换进程**不被清理：自更新时 `doRestart` 用 `setsid` 派生新进程后退出，systemd 又启动一个，两者争抢 8115 端口，失败的退出、systemd 再重启，如此循环（实测重启计数涨到 10，两个进程并存）。
+
+  现在改为：在 systemd 管理下**直接把重启交给 systemd**（以非零状态退出，由 unit 的 `Restart=always` 接管），不再自己派生。unit 相应改为 `KillMode=mixed`。
+
+- **重启 pan-fetcher 会杀死 Jackett**：`mixed` 会清理整个 cgroup，Jackett 也在其中。现在启动 Jackett 后把它移入独立的 systemd 单元（`systemd-run --scope --pid`），从此不受本服务重启影响。若 `systemd-run` 不可用则退回原行为并在日志中说明。
+
 ## v2.0.22
 
 ### 新增

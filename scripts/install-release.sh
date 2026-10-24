@@ -174,7 +174,18 @@ Environment=HOME=${HOME_DIR}
 # KillMode=control-group kills every process in the unit's cgroup on restart, so
 # restarting pan-fetcher (including its in-panel self-update) would take Jackett
 # down with it and leave search broken until someone started it by hand.
-KillMode=process
+#
+# KillMode=process alone was tried and is wrong: it also leaves pan-fetcher's own
+# replacement process alive, so a restart ends up with two servers racing for the
+# port and the unit loops on "address already in use". mixed is the correct
+# setting — SIGTERM goes to the main process only, and the cgroup is cleaned up
+# with SIGKILL afterwards, which is what a service restart needs.
+#
+# Jackett survives not because of the kill mode but because it is started in its
+# own session (setsid) *and* moved out of this cgroup by Delegate, so the
+# post-stop cgroup sweep does not reach it.
+KillMode=mixed
+Delegate=yes
 
 Restart=always
 RestartSec=10s

@@ -2390,7 +2390,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';}
             else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';}
-          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
+          }catch(e){sp.innerHTML='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
         async function testJackett(){
@@ -2407,7 +2407,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';}
             else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';}
-          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
+          }catch(e){sp.innerHTML='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
 
@@ -2838,11 +2838,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
               sp.innerHTML='{{index .T "update_new_found"}}'.replace('%s','<b>'+j.latest+'</b>').replace('%s','<b>'+j.current+'</b>')+' <button type="button" id="do-update-btn" onclick="doUpdate()" style="margin:0 0 0 8px;padding:4px 10px;font-size:12px;background:var(--accent);">{{index .T "update_do_btn"}}</button>';
               sp.style.color='var(--accent-2)';
             }else if(j.latest){
-              sp.textContent='{{ico "check"}}{{index .T "update_already_latest"}} ('+j.latest+')';sp.style.color='var(--accent-2)';
+              sp.innerHTML='{{ico "check"}}{{index .T "update_already_latest"}} ('+j.latest+')';sp.style.color='var(--accent-2)';
             }else{
-              sp.textContent='{{ico "close"}}{{index .T "update_fetch_failed"}}';sp.style.color='var(--danger)';
+              sp.innerHTML='{{ico "close"}}{{index .T "update_fetch_failed"}}';sp.style.color='var(--danger)';
             }
-          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
+          }catch(e){sp.innerHTML='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';}
           btn.disabled=false;
         }
         async function doUpdate(){
@@ -2854,7 +2854,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             var j=await r.json();
             if(j.ok){sp.innerHTML=ICO('check')+' '+j.msg;sp.style.color='var(--accent-2)';setTimeout(function(){location.reload();},3000);}
             else{sp.innerHTML=ICO('close')+' '+j.msg;sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
-          }catch(e){sp.textContent='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
+          }catch(e){sp.innerHTML='{{ico "close"}}{{index .T "net_error"}}';sp.style.color='var(--danger)';var b=document.getElementById('check-update-btn');if(b)b.disabled=false;}
         }
       </script>
       <!-- settings form -->

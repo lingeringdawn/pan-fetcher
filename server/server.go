@@ -3484,37 +3484,10 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		exe, err := os.Executable()
-		if err != nil {
-			log.Printf("[restart] failed to get executable: %v", err)
-			os.Exit(1)
-		}
-		var args []string
-		skipNext := false
-		for i, a := range os.Args {
-			if i == 0 { continue }
-			if skipNext { skipNext = false; continue }
-			if a == "--port" || a == "-p" { args = append(args, a); if i+1 < len(os.Args) { args = append(args, os.Args[i+1]) }; skipNext = true; continue }
-			args = append(args, a)
-		}
-		cmd := exec.Command(exe, args...)
-		// Keep the current working directory; see doRestart for why it must not
-		// be switched to the binary's folder.
-		cmd.Dir = ""
-		// Detach into a new session so the replacement process survives our exit
-		// and is not tied to this process's controlling terminal. Setsid also
-		// creates a new process group; adding Setpgid would fail with EPERM
-		// because setpgid(2) rejects a session leader.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Start(); err != nil {
-			log.Printf("[restart] failed to spawn: %v", err)
-			os.Exit(1)
-		}
-		log.Printf("[restart] new process started (pid %d), exiting", cmd.Process.Pid)
-		os.Exit(0)
+		// Reuse doRestart so both paths handle systemd identically: delegating
+		// the restart matters here too, and a second copy of the spawn logic
+		// would drift from it.
+		doRestart()
 	}()
 }
 
@@ -3760,8 +3733,40 @@ func parseVersion(s string) ([]int, string) {
 	return nums, prerelease
 }
 
-// doRestart spawns a new process and exits.
+// runningUnderSystemd reports whether this process was started by systemd.
+//
+// It is detected from the unit in the cgroup path, which systemd sets for every
+// service process. INIT_PROCESS / NOTIFY_SOCKET alone are not enough: the first
+// is only set for PID 1, and the second can be absent depending on unit type.
+func runningUnderSystemd() bool {
+	if os.Getenv("INVOCATION_ID") != "" {
+		// Set by systemd for each unit invocation (v232+). Unambiguous and
+		// inherited by children, but only consulted here, never exported.
+		return true
+	}
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), ".service")
+}
+
+// doRestart replaces the running process with a fresh one.
+//
+// Under systemd the restart is delegated to the service manager: exiting with a
+// non-zero status makes systemd start a new main process, which keeps the unit's
+// supervision (restart policy, cgroup, kill mode) authoritative.
+//
+// Spawning a detached child and exiting — what this did before — conflicts with
+// that. With KillMode=process systemd does not clean up the unit's processes, so
+// the detached child and the process systemd starts after the exit both try to
+// bind the port; one wins, the other dies, and the unit restarts forever.
 func doRestart() {
+	if runningUnderSystemd() {
+		log.Printf("[update] exiting for systemd to restart the service")
+		os.Exit(1)
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		log.Printf("[update] failed to get executable: %v", err)
