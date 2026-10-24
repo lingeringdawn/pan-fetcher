@@ -35,6 +35,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      # gh release view resolves the repository from the working directory, so a
+      # checkout is required even though nothing is built here. Without it the
+      # step fails with "fatal: not a git repository".
+      - uses: actions/checkout@v4
+
       - name: Promote release
         env:
           GH_TOKEN: ${{ github.token }}
