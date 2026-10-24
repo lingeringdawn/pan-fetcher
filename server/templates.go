@@ -499,6 +499,20 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" '+
         'stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
     }
+
+    // escHTML escapes a value before it is concatenated into innerHTML.
+    //
+    // It lives here, in the first script block, rather than next to the webhook
+    // code that first needed it: pages call it while their own script runs, and
+    // a definition further down the document is not available yet. The genre
+    // chips on the discover page failed exactly that way — loadTrendingGenres()
+    // ran before this function was declared, threw a ReferenceError, and left
+    // the filter row empty.
+    function escHTML(s){
+      return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
     var modalCb=null;
     function showModal(title,body,buttons){
       document.getElementById('g-modal-title').textContent=title;
@@ -2492,12 +2506,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           renderWebhooks(window.__webhooks);
         }
 
-        // Minimal escaping: webhook values are user input echoed back into HTML.
-        function escHTML(s){
-          return String(s==null?'':s).replace(/[&<>"']/g,function(c){
-            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-          });
-        }
+        // escHTML is declared in the first script block; see the note there for
+        // why it is not defined next to its callers.
 
         function webhookAdd(){
           webhookForm('add','',{
