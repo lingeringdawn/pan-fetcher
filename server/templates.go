@@ -1353,6 +1353,17 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       .detail-poster-col{flex-shrink:0;}
       .detail-poster-img{width:130px;height:195px;border-radius:10px;object-fit:cover;box-shadow:0 8px 24px rgba(0,0,0,.3);border:3px solid var(--card);}
       .detail-poster-placeholder{width:130px;height:195px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:48px;background:linear-gradient(135deg,#374151,#1f2937);border:3px solid var(--card);}
+      /* Genre filter chips under the trending tabs. Kept visually lighter than
+         the tabs above so the two levels stay distinguishable. */
+      .trending-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 12px;}
+      .trending-filters-label{font-size:11px;color:var(--muted);margin-right:2px;}
+      .genre-chip{
+        padding:3px 12px;border-radius:14px;font-size:12px;cursor:pointer;
+        background:var(--bg);border:1px solid var(--line);color:var(--muted);
+        transition:background .12s,color .12s,border-color .12s;user-select:none;
+      }
+      .genre-chip:hover{border-color:var(--accent);color:var(--accent);}
+      .genre-chip.active{background:var(--accent);border-color:var(--accent);color:#fff;}
       .detail-info-col{flex:1;min-width:0;padding-top:60px;}
       .detail-info-col h2{margin:0 0 4px;font-size:22px;line-height:1.3;}
       .detail-info-col .detail-orig{font-size:13px;color:var(--muted);margin-bottom:6px;}
@@ -1395,6 +1406,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div class="search-tabs" style="margin-bottom:0;">
         <div class="search-tab active" data-trending="movies" onclick="switchTrendingTab('movies')">{{ico "film"}}热门电影</div>
         <div class="search-tab" data-trending="tv" onclick="switchTrendingTab('tv')">{{ico "tv"}}热门剧集</div>
+      </div>
+      <!-- Genre filter. TMDB's trending endpoints take no genre argument, so a
+           selection switches the request to /discover sorted by popularity. -->
+      <div class="trending-filters" id="trending-filters">
+        <span class="trending-filters-label">{{index .T "trending_genre"}}</span>
+        <!-- Filled by JS from /api/tmdb/genres, with "all" always first. -->
       </div>
       <div class="tmdb-grid" id="trending-grid" style="min-height:120px;">
         <div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">{{icoSpin}}</div>
@@ -1624,39 +1641,105 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
     // --- Trending ---
     var trendingMovies=[],trendingTV=[],trendingPage=1,trendingTab='movies';
+    // Selected genre id: 0 means no filter (plain trending).
+    var trendingGenre=0,trendingGenres=[];
+
     function switchTrendingTab(tab){
+      if(trendingTab===tab&&trendingMovies.length)return;
       trendingTab=tab;
       document.querySelectorAll('[data-trending]').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-trending')===tab);});
       renderTrendingCards(tab);
     }
+
+    // loadTrendingGenres fills the chip row. The "all" chip is rendered first so
+    // the unfiltered view is always one click away.
+    async function loadTrendingGenres(){
+      var box=document.getElementById('trending-filters');
+      if(!box)return;
+      try{
+        var r=await fetch('/api/tmdb/genres');
+        var j=await r.json();
+        trendingGenres=j.genres||[];
+      }catch(e){ trendingGenres=[]; }
+      var h='<span class="trending-filters-label">{{index .T "trending_genre"}}</span>';
+      h+='<span class="genre-chip'+(trendingGenre===0?' active':'')+'" data-genre="0" onclick="selectTrendingGenre(0)">{{index .T "trending_genre_all"}}</span>';
+      trendingGenres.forEach(function(g){
+        h+='<span class="genre-chip'+(trendingGenre===g.id?' active':'')+'" data-genre="'+g.id+'" onclick="selectTrendingGenre('+g.id+')">'+escHTML(g.name)+'</span>';
+      });
+      box.innerHTML=h;
+    }
+
+    function selectTrendingGenre(id){
+      if(trendingGenre===id)return;
+      trendingGenre=id;
+      document.querySelectorAll('#trending-filters .genre-chip').forEach(function(c){
+        c.classList.toggle('active',Number(c.getAttribute('data-genre'))===id);
+      });
+      // The cached lists belong to the previous filter.
+      trendingMovies=[];trendingTV=[];trendingPage=1;
+      var grid=document.getElementById('trending-grid');
+      if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
+      loadTrending();
+    }
+
     function renderTrendingCards(tab){
       var items=tab==='movies'?trendingMovies:trendingTV;
       var grid=document.getElementById('trending-grid');
-      if(!items.length){grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">暂无数据</div>';document.getElementById('btn-trending-more').style.display='none';return;}
+      var moreBtn=document.getElementById('btn-trending-more');
+      if(!items.length){
+        grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">{{index .T "trending_empty"}}</div>';
+        if(moreBtn)moreBtn.style.display='none';
+        return;
+      }
       grid.innerHTML=items.map(function(it){
         var posterHTML=it.poster
           ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>\'+ICO("film")+\'</div>\'">'
-          :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'film':'tv')+'</div>';
+          :'<div class="tmdb-poster-placeholder">'+ICO(it.media_type==='movie'?'film':'tv')+'</div>';
         return '<div class="tmdb-card" onclick="selectTMDB(\''+it.media_type+'\','+it.id+')" data-type="'+it.media_type+'" data-id="'+it.id+'">'
           +'<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div>'
-          +'<div class="tmdb-card-type">'+(it.media_type==='movie'?'电影':'剧集')+'</div>'
+          +'<div class="tmdb-card-type">'+(it.media_type==='movie'?'{{index .T "media_movie"}}':'{{index .T "media_tv"}}')+'</div>'
           +'</div>';
       }).join('');
-      document.getElementById('btn-trending-more').style.display='';
+      if(moreBtn)moreBtn.style.display='';
     }
+
+    // trendingQuery builds the request for the current tab and filter.
+    function trendingQuery(page){
+      var q='/api/tmdb/trending?page='+page;
+      if(trendingGenre>0)q+='&genre='+trendingGenre;
+      return q;
+    }
+
     async function loadTrending(){
-      try{var r=await fetch('/api/tmdb/trending?page=1');var j=await r.json();if(j.error)return;trendingMovies=j.movies||[];trendingTV=j.tv||[];trendingPage=1;renderTrendingCards(trendingTab);}catch(e){}
+      var grid=document.getElementById('trending-grid');
+      if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+ICO('loading',true)+'</div>';
+      try{
+        var r=await fetch(trendingQuery(1));
+        var j=await r.json();
+        if(j.error){
+          if(grid)grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--muted);">'+escHTML(j.error)+'</div>';
+          return;
+        }
+        trendingMovies=j.movies||[];trendingTV=j.tv||[];trendingPage=1;
+        renderTrendingCards(trendingTab);
+      }catch(e){}
     }
+
     async function loadMoreTrending(){
       var btn=document.getElementById('btn-trending-more');
-      btn.textContent='{{icoSpin}}';btn.disabled=true;
-      trendingPage++;
+      if(!btn||btn.disabled)return;
+      btn.innerHTML=ICO('loading',true);btn.disabled=true;
+      var moreLabel='{{index .T "trending_more"}}';
+      var next=trendingPage+1;
       try{
-        var r=await fetch('/api/tmdb/trending?page='+trendingPage);
+        var r=await fetch(trendingQuery(next));
         var j=await r.json();
-        if(j.error){btn.textContent='+more+';btn.disabled=false;return;}
+        if(j.error){btn.innerHTML=moreLabel;btn.disabled=false;return;}
         var newMovies=j.movies||[],newTV=j.tv||[];
-        if(!newMovies.length&&!newTV.length){btn.textContent='{{ico "check"}}已全部加载';btn.disabled=true;return;}
+        if(!newMovies.length&&!newTV.length){
+          btn.innerHTML=ICO('check')+'{{index .T "trending_all_loaded"}}';btn.disabled=true;return;
+        }
+        trendingPage=next;
         var grid=document.getElementById('trending-grid');
         var frag=document.createDocumentFragment();
         var items=trendingTab==='movies'?newMovies:newTV;
@@ -1666,16 +1749,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           div.setAttribute('data-type',it.media_type);div.setAttribute('data-id',it.id);
           var posterHTML=it.poster
             ?'<img class="tmdb-poster" src="'+it.poster+'" alt="'+it.title+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=&#34;tmdb-poster-placeholder&#34;>\'+ICO("film")+\'</div>\'">'
-            :'<div class="tmdb-poster-placeholder">'+(it.media_type==='movie'?'film':'tv')+'</div>';
-          div.innerHTML='<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div><div class="tmdb-card-type">'+(it.media_type==='movie'?'电影':'剧集')+'</div>';
+            :'<div class="tmdb-poster-placeholder">'+ICO(it.media_type==='movie'?'film':'tv')+'</div>';
+          div.innerHTML='<div class="tmdb-poster-wrap">'+posterHTML+'<div class="tmdb-card-overlay"><div class="tmdb-card-title">'+it.title+'</div><div class="tmdb-card-year">'+it.year+'</div></div></div><div class="tmdb-card-type">'+(it.media_type==='movie'?'{{index .T "media_movie"}}':'{{index .T "media_tv"}}')+'</div>';
           frag.appendChild(div);
         });
         grid.appendChild(frag);
         trendingMovies=trendingMovies.concat(newMovies);
         trendingTV=trendingTV.concat(newTV);
-        btn.textContent='+more+';btn.disabled=false;
-      }catch(e){btn.textContent='+more+';btn.disabled=false;}
+        btn.innerHTML=moreLabel;btn.disabled=false;
+      }catch(e){btn.innerHTML=moreLabel;btn.disabled=false;}
     }
+
+    loadTrendingGenres();
     loadTrending();
     var trendingObserver=new IntersectionObserver(function(entries){
       if(entries[0].isIntersecting){loadMoreTrending();}

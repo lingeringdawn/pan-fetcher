@@ -1545,6 +1545,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logs", s.authCheck(s.handleAPILogs))
 	mux.HandleFunc("/api/tmdb/search", s.authCheck(s.handleTMDBSearch))
 	mux.HandleFunc("/api/tmdb/trending", s.authCheck(s.handleTMDBTrending))
+	mux.HandleFunc("/api/tmdb/genres", s.authCheck(s.handleTMDBGenres))
 	mux.HandleFunc("/api/tmdb/detail", s.authCheck(s.handleTMDBDetail))
 	mux.HandleFunc("/api/lang", s.authCheck(s.handleAPILang))
 }
@@ -2615,11 +2616,13 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
 		page = p
 	}
-	movies, tvShows, err := media.DefaultTMDB.TrendingPage(page)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
-		return
+	// genre is optional: 0 (or absent) keeps the plain trending lists, which is
+	// what the panel showed before filtering existed.
+	genreID := 0
+	if g, err := strconv.Atoi(r.URL.Query().Get("genre")); err == nil && g > 0 {
+		genreID = g
 	}
+
 	type result struct {
 		TMDBID    int    `json:"id"`
 		Title     string `json:"title"`
@@ -2628,15 +2631,52 @@ func (s *Server) handleTMDBTrending(w http.ResponseWriter, r *http.Request) {
 		Poster    string `json:"poster"`
 		Overview  string `json:"overview"`
 	}
-	moviesOut := make([]result, 0, len(movies))
-	for _, m := range movies {
-		moviesOut = append(moviesOut, result{TMDBID: m.TMDBID, Title: m.DisplayName(), Year: m.YearStr(), MediaType: "movie", Poster: m.PosterURL(), Overview: m.Overview})
+	convert := func(in []media.TMDBResult, mediaType string) []result {
+		out := make([]result, 0, len(in))
+		for _, m := range in {
+			out = append(out, result{
+				TMDBID: m.TMDBID, Title: m.DisplayName(), Year: m.YearStr(),
+				MediaType: mediaType, Poster: m.PosterURL(), Overview: m.Overview,
+			})
+		}
+		return out
 	}
-	tvOut := make([]result, 0, len(tvShows))
-	for _, t := range tvShows {
-		tvOut = append(tvOut, result{TMDBID: t.TMDBID, Title: t.DisplayName(), Year: t.YearStr(), MediaType: "tv", Poster: t.PosterURL(), Overview: t.Overview})
+
+	var movies, tvShows []media.TMDBResult
+	var err error
+	if genreID > 0 {
+		// Filtering needs one request per media type, since a genre id alone does
+		// not tell movie and TV apart.
+		if movies, err = media.DefaultTMDB.TrendingFiltered("movie", genreID, page); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+			return
+		}
+		if tvShows, err = media.DefaultTMDB.TrendingFiltered("tv", genreID, page); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+			return
+		}
+	} else {
+		if movies, tvShows, err = media.DefaultTMDB.TrendingPage(page); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+			return
+		}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"movies": moviesOut, "tv": tvOut})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"movies": convert(movies, "movie"),
+		"tv":     convert(tvShows, "tv"),
+		"genre":  genreID,
+	})
+}
+
+// handleTMDBGenres lists the genres the trending section can be filtered by.
+func (s *Server) handleTMDBGenres(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	out := []map[string]interface{}{}
+	for _, g := range media.TrendingGenres() {
+		out = append(out, map[string]interface{}{"id": g.ID, "name": g.Name})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"genres": out})
 }
 
 func (s *Server) handleTMDBDetail(w http.ResponseWriter, r *http.Request) {

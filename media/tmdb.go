@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -337,6 +338,93 @@ func (c *TMDBClient) SearchAll(query string) (movies, tvShows []TMDBResult, err 
 		tvShows = tvShows[:8]
 	}
 	return movies, tvShows, nil
+}
+
+// TrendingGenre is a genre a caller can filter the trending lists by.
+//
+// The ids are TMDB's own, which are stable and shared between movies and TV for
+// the genres below. Only a small curated set is offered: the full list differs
+// between the two media types, and a combined picker has to stay meaningful for
+// both.
+type TrendingGenre struct {
+	ID   int
+	Name string
+}
+
+// TrendingGenres returns the genres the trending lists can be filtered by, in
+// the order the UI presents them.
+//
+// Animation and documentary are the two that matter most for this project's
+// audience — anime is filed under Animation on TMDB.
+func TrendingGenres() []TrendingGenre {
+	return []TrendingGenre{
+		{16, "动画"},
+		{18, "剧情"},
+		{35, "喜剧"},
+		{28, "动作"},
+		{99, "纪录"},
+		{878, "科幻"},
+		{9648, "悬疑"},
+		{10749, "爱情"},
+	}
+}
+
+// TrendingFiltered returns trending titles for one media type, optionally
+// restricted to a genre, with paging.
+//
+// TMDB's /trending endpoints take no genre parameter, so filtering has to go
+// through /discover sorted by popularity — that is what "trending" means for a
+// genre: the most popular titles in it. Without a genre the trending endpoint is
+// used, because its ordering is TMDB's own popularity signal rather than
+// something reconstructed here.
+func (c *TMDBClient) TrendingFiltered(mediaType string, genreID, page int) ([]TMDBResult, error) {
+	if c == nil || c.apiKey == "" {
+		return nil, fmt.Errorf("TMDB API key not configured")
+	}
+	if mediaType != "movie" && mediaType != "tv" {
+		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	params := url.Values{}
+	params.Set("api_key", c.apiKey)
+	params.Set("language", "zh-CN")
+	params.Set("page", strconv.Itoa(page))
+
+	var endpoint string
+	if genreID > 0 {
+		// Popularity is the closest analogue to "trending" for a genre, and it is
+		// what makes the filter useful: an unsorted discover call returns
+		// near-arbitrary titles.
+		params.Set("with_genres", strconv.Itoa(genreID))
+		params.Set("sort_by", "popularity.desc")
+		// Do not exclude titles that have not been rated yet — TMDB's default
+		// vote filter hides most anime from the current season.
+		params.Set("vote_count.gte", "10")
+		endpoint = "https://api.themoviedb.org/3/discover/" + mediaType + "?" + params.Encode()
+	} else {
+		endpoint = "https://api.themoviedb.org/3/trending/" + mediaType + "/week?" + params.Encode()
+	}
+
+	resp, err := c.http.Get(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("TMDB returned HTTP %d", resp.StatusCode)
+	}
+
+	var sr tmdbSearchResp
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return nil, err
+	}
+	for i := range sr.Results {
+		sr.Results[i].MediaType = mediaType
+	}
+	return sr.Results, nil
 }
 
 // Trending returns trending movies and TV shows for the week.
