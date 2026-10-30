@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -382,20 +383,45 @@ func (d *dedupCache) Save() {
 	d.saveLocked()
 }
 
+// dedupStoreKey derives the key under which a release is remembered.
+//
+// The info hash is preferred, because the same torrent is often advertised with
+// different magnet parameters and only the hash identifies it.
+//
+// When the link carries no xt=urn:btih — a plain .torrent URL, or a magnet built
+// by an indexer that omits it — a hash of the whole string is used instead.
+// Returning "" for those, as this used to, made Has() always false and Add() a
+// no-op, so the same release was submitted to 115 again on every run and never
+// appeared in the dedup list.
+func dedupStoreKey(magnet string) string {
+	if magnet == "" {
+		return ""
+	}
+	if h := extractInfoHashFromMagnet(magnet); h != "" {
+		return h
+	}
+	sum := sha1.Sum([]byte(magnet))
+	return "raw-" + hex.EncodeToString(sum[:])
+}
+
 func (d *dedupCache) Has(subKey, magnet string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	k := dedupStoreKey(magnet)
+	if k == "" {
+		return false
+	}
 	set := d.subs[subKey]
 	if set == nil {
 		return false
 	}
-	return set[extractInfoHashFromMagnet(magnet)]
+	return set[k]
 }
 
 func (d *dedupCache) Add(subKey, magnet string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	h := extractInfoHashFromMagnet(magnet)
+	h := dedupStoreKey(magnet)
 	if h == "" {
 		return
 	}

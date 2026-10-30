@@ -229,6 +229,88 @@ func TestRunSubscriptionRequiresLogin(t *testing.T) {
 	}
 }
 
+// --- dedup key ---
+
+// newTestDedup builds an in-memory dedup cache.
+func newTestDedup() *dedupCache {
+	return &dedupCache{
+		subs:          map[string]map[string]bool{},
+		torrentURLs:   map[string]string{},
+		torrentErrors: map[string]string{},
+		hashNames:     map[string]string{},
+	}
+}
+
+// TestDedupRemembersUnparseableLinks is the regression test for repeated
+// submissions.
+//
+// A link without xt=urn:btih — a plain .torrent URL, or a magnet an indexer built
+// without the hash — used to produce an empty key, which made Has() always false
+// and Add() a no-op. The same release was then submitted to 115 again on every
+// run, and never appeared in the cache list either.
+func TestDedupRemembersUnparseableLinks(t *testing.T) {
+	links := []string{
+		"https://example.com/download/123.torrent",
+		"magnet:?dn=no-hash-here",
+		"https://mikanani.me/Path/To/Some.Episode.mkv",
+	}
+	for _, link := range links {
+		d := newTestDedup()
+		if d.Has("k", link) {
+			t.Errorf("%q: should not be cached before adding", link)
+		}
+		d.Add("k", link)
+		if got := d.SubCount("k"); got != 1 {
+			t.Errorf("%q: Add did nothing (count=%d); the link would be resubmitted forever", link, got)
+		}
+		if !d.Has("k", link) {
+			t.Errorf("%q: Has still false after Add", link)
+		}
+	}
+}
+
+// TestDedupUsesInfoHashWhenPresent verifies the preferred key is still the info
+// hash, so the same torrent under different magnet parameters is one entry.
+func TestDedupUsesInfoHashWhenPresent(t *testing.T) {
+	d := newTestDedup()
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	a := "magnet:?xt=urn:btih:" + hash + "&dn=first&tr=udp://one"
+	b := "magnet:?xt=urn:btih:" + hash + "&dn=second&tr=udp://two"
+
+	d.Add("k", a)
+	if !d.Has("k", b) {
+		t.Error("the same info hash under different parameters should be one entry")
+	}
+	if got := d.SubCount("k"); got != 1 {
+		t.Errorf("count = %d, want 1", got)
+	}
+}
+
+// TestDedupIgnoresEmptyLink verifies an empty link is not stored under a shared
+// key, which would make unrelated releases collide.
+func TestDedupIgnoresEmptyLink(t *testing.T) {
+	d := newTestDedup()
+	d.Add("k", "")
+	if got := d.SubCount("k"); got != 0 {
+		t.Errorf("empty link should not be stored, count = %d", got)
+	}
+	if d.Has("k", "") {
+		t.Error("empty link should never be reported as cached")
+	}
+}
+
+// TestDedupKeysAreStable verifies the derived key does not change between calls,
+// so a cached entry is found again later.
+func TestDedupKeysAreStable(t *testing.T) {
+	const link = "https://example.com/x.torrent"
+	if dedupStoreKey(link) != dedupStoreKey(link) {
+		t.Error("dedupStoreKey is not deterministic")
+	}
+	if dedupStoreKey(link) == dedupStoreKey("https://example.com/y.torrent") {
+		t.Error("different links must not share a key")
+	}
+}
+
 // --- scheduler shape ---
 
 // TestSchedulerUsesRealBackoff guards the regression where the retry map was
