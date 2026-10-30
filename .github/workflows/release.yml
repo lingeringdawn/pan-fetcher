@@ -61,6 +61,34 @@ jobs:
           gh release edit "$TAG" --prerelease=false --latest
           echo "promoted $TAG to a stable release"
 
+      # Stripping the preview marker is part of promoting.
+      #
+      # The build sets the title to "vX.Y.Z (预览版)" and puts a notice at the top
+      # of the notes; leaving those in place publishes a stable release that still
+      # says it is unverified, which is worse than either state on its own.
+      - name: Drop the preview markers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.promote }}
+        run: |
+          set -euo pipefail
+
+          # Title: "vX.Y.Z (预览版)" -> "vX.Y.Z"
+          gh release edit "$TAG" --title "$TAG"
+
+          # Notes: remove the notice line and any blank lines it left behind.
+          gh release view "$TAG" --json body --jq '.body' > /tmp/body.md
+          sed '/^> \*\*预览版\*\*/d' /tmp/body.md > /tmp/body-clean.md
+          sed -i '/./,$!d' /tmp/body-clean.md   # trim leading blank lines
+          if [ -s /tmp/body-clean.md ]; then
+            gh release edit "$TAG" --notes-file /tmp/body-clean.md
+            echo "notes updated"
+          else
+            echo "::warning::notes became empty after stripping the notice; keeping the original"
+          fi
+
+          echo "title: $(gh release view "$TAG" --json name --jq '.name')"
+
       # :latest is what an unattended `docker pull` gets, so it only moves once
       # the release is stable. Moving a tag means re-pushing the same image under
       # the new name, which the registry accepts as a manifest copy.
