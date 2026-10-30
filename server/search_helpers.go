@@ -237,6 +237,32 @@ type rssFeedEntry struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+// UnmarshalJSON treats a missing "enabled" field as enabled.
+//
+// The field used to be a *bool read through IsEnabled(), where nil meant true, so
+// subscription files written before the flag existed kept running. Switching to a
+// plain bool silently changed that: the zero value is false, so every legacy
+// entry — and every entry copied from rss.example.json, which omits the flag in
+// two of its three examples — became "disabled" after an upgrade and was skipped
+// by the scheduler with no visible reason.
+//
+// An explicit false is still honoured; only an absent key defaults to true.
+func (r *rssFeedEntry) UnmarshalJSON(data []byte) error {
+	// The shadow type has the same fields but none of the methods, so decoding
+	// into it cannot recurse back here.
+	type shadow rssFeedEntry
+	aux := struct {
+		*shadow
+		Enabled *bool `json:"enabled"`
+	}{shadow: (*shadow)(r)}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.Enabled = aux.Enabled == nil || *aux.Enabled
+	return nil
+}
+
 func (s *Server) handleSearchUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("id")
 	searches := s.loadSavedSearches()

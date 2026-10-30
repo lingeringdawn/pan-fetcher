@@ -33,7 +33,9 @@ func (f *fakeServerAgent) AddRssUrlTask(url string) {
 }
 
 func (f *fakeServerAgent) ExecuteAllRssTask() {}
-func (f *fakeServerAgent) ProcessRSSFeed(url, cid, savepath, subKey string) []string { return nil }
+func (f *fakeServerAgent) ProcessRSSFeed(url, cid, savepath, subKey string) ([]string, error) {
+	return nil, nil
+}
 
 func (f *fakeServerAgent) OfflineClear(num int) error {
 	f.clearTypes = append(f.clearTypes, num)

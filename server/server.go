@@ -40,7 +40,7 @@ import (
 
 type Agent interface {
 	AddMagnetTask([]string, string, string) error
-	ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string
+	ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string, error)
 	OfflineClear(int) error
 	ListTasks() ([]p115pkg.TaskItem, error)
 	ListDir(string) ([]p115pkg.DirEntry, error)
@@ -1336,15 +1336,14 @@ func (s *Server) autoCheckUpdates() {
 			return // switched off in the settings page
 		}
 
-		interval := ws.SubsInterval
-		if interval <= 0 {
-			interval = 60
-		}
-		// Checking far more often than the RSS cycle is pointless: GitHub
-		// rate-limits unauthenticated API calls.
-		if interval < 30 {
-			interval = 30
-		}
+		// Fixed, and deliberately independent of SubsInterval.
+		//
+		// How often to notice a new release has nothing to do with how often to
+		// poll feeds, and sharing the setting meant editing the subscription
+		// interval silently changed the update check as well. Six hours is often
+		// enough to be useful and leaves the unauthenticated GitHub API quota
+		// (60 requests/hour) essentially untouched.
+		const interval = 6 * time.Hour
 
 		if latest := s.latestReleaseTag(); latest != "" && latest != lastSeen {
 			lastSeen = latest
@@ -1357,7 +1356,7 @@ func (s *Server) autoCheckUpdates() {
 			}
 		}
 
-		time.Sleep(time.Duration(interval) * time.Minute)
+		time.Sleep(interval)
 	}
 }
 
@@ -1382,92 +1381,212 @@ func (s *Server) latestReleaseTag() string {
 	return release.TagName
 }
 
-// autoRunSubscriptions loops through enabled RSS subscriptions.
-// Between feeds: small cooldown (30s). Between full cycles: SubsInterval.
-// Failed feeds are retried with exponential backoff.
-func (s *Server) autoRunSubscriptions() {
-	// Wait a short grace period for server to fully stabilise
-	time.Sleep(2 * time.Minute)
+// Subscription scheduling constants.
+const (
+	// subFeedGap spaces out consecutive feeds in one pass, so a burst of
+	// subscriptions does not hammer the indexers back to back.
+	subFeedGap = 30 * time.Second
+	// subsStartupDelay gives the server time to finish starting: the first poll
+	// issues HTTP requests against our own listener.
+	subsStartupDelay = 2 * time.Minute
+)
 
-	type retryState struct {
-		failures int
-		nextTry  time.Time
+// errSubsAlreadyRunning is returned when a subscription is already being run.
+var errSubsAlreadyRunning = errors.New("subscription is already running")
+
+// subsRunMu guards subsRunning.
+var (
+	subsRunMu   sync.Mutex
+	subsRunning = make(map[string]bool)
+)
+
+// runSubscription runs one subscription once and reports how many new items were
+// submitted.
+//
+// All three entry points — the scheduler, the "run now" button and quick start —
+// go through this, so the keyword merge, the dedup accounting and the
+// notification cannot drift apart between copies.
+//
+// A subscription that is already running is refused rather than started twice.
+// ProcessRSSFeed checks the dedup cache, submits, and only then records the
+// hashes; two concurrent runs would both pass that check and submit the same
+// releases twice.
+func (s *Server) runSubscription(subKey, feedURL, cid, savepath, filter string) (int, error) {
+	if s.Agent == nil {
+		return 0, errors.New("115 未登录")
 	}
-	retryMap := make(map[string]*retryState) // subKey -> retry state
+
+	subsRunMu.Lock()
+	if subsRunning[subKey] {
+		subsRunMu.Unlock()
+		return 0, errSubsAlreadyRunning
+	}
+	subsRunning[subKey] = true
+	subsRunMu.Unlock()
+	defer func() {
+		subsRunMu.Lock()
+		delete(subsRunning, subKey)
+		subsRunMu.Unlock()
+	}()
+
+	// Relative URLs point at our own RSS endpoint.
+	if strings.HasPrefix(feedURL, "/") {
+		feedURL = fmt.Sprintf("http://127.0.0.1:%d%s", s.Port, feedURL)
+	}
+	target := ensureKeywordParam(feedURL, filter)
+
+	before := globalDedup.SubCount(subKey)
+	names, err := s.Agent.ProcessRSSFeed(target, cid, savepath, subKey)
+	after := globalDedup.SubCount(subKey)
+
+	newItems := after - before
+	if newItems < 0 {
+		// The cache was cleared while the feed ran; report nothing new rather
+		// than a negative count.
+		newItems = 0
+	}
+	if newItems > 0 {
+		notify.RecordItems(subKey, names)
+		notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), true)
+	}
+	return newItems, err
+}
+
+// retryBackoff returns how long to wait before retrying a failed subscription.
+//
+// Five minutes, doubling per consecutive failure and capped at forty: a feed that
+// keeps failing is more likely broken than momentarily unlucky, and should not be
+// retried as eagerly as one that failed once.
+func retryBackoff(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	if failures > 4 {
+		failures = 4
+	}
+	return time.Duration(1<<uint(failures-1)) * 5 * time.Minute
+}
+
+// autoRunSubscriptions runs enabled subscriptions on their own schedules.
+//
+// Each subscription carries its own next-run time instead of sharing one global
+// cycle, so a failure retries after a short backoff while subscriptions that
+// succeeded are not re-run early.
+//
+// The previous version kept a retry map that was never written to — the only
+// mutation was an unconditional delete right after the run — so its promised
+// "exponential backoff" never happened and a failed feed simply waited out the
+// whole interval.
+func (s *Server) autoRunSubscriptions() {
+	time.Sleep(subsStartupDelay)
+
+	type subState struct {
+		nextRun  time.Time
+		failures int
+	}
+	states := make(map[string]*subState)
 
 	for {
 		ws := s.loadWebSettings()
-		cycleInterval := ws.SubsInterval
-		if cycleInterval <= 0 {
-			cycleInterval = 60
+		cycle := time.Duration(ws.SubsInterval) * time.Minute
+		if cycle <= 0 {
+			cycle = 60 * time.Minute
 		}
 
-		feeds := s.readRssFeeds()
-		ran := 0
+		feeds, err := s.readRssFeedsErr()
+		if err != nil {
+			// A broken or unreadable file is not the same as having no
+			// subscriptions, and must not be reported as one.
+			log.Printf("[auto-sub] 订阅配置读取失败: %v", err)
+			time.Sleep(time.Minute)
+			continue
+		}
+
+		now := time.Now()
+		var due []rssFeedEntry
+		seen := make(map[string]bool)
 		for _, entries := range feeds {
 			for _, e := range entries {
 				if !e.Enabled {
 					continue
 				}
-				subKey := e.Name
-				feedURL := e.URL
-				if strings.HasPrefix(feedURL, "/") {
-					feedURL = fmt.Sprintf("http://127.0.0.1:%d%s", s.Port, feedURL)
+				seen[e.Name] = true
+				if strings.TrimSpace(e.Cid) == "" {
+					// Without a target folder this can never run. Say so: the old
+					// code skipped it silently and still counted it as executed.
+					log.Printf("[auto-sub] 跳过 %q: 未设置保存目录（cid）", e.Name)
+					continue
 				}
-
-				// Check retry state
-				if rs, ok := retryMap[subKey]; ok {
-					if time.Now().Before(rs.nextTry) {
-						log.Printf("[auto-sub] skipping %s (retry in %s)", subKey, time.Until(rs.nextTry).Round(time.Second))
-						continue
-					}
+				st := states[e.Name]
+				if st == nil {
+					st = &subState{}
+					states[e.Name] = st
 				}
-
-				log.Printf("[auto-sub] running: %s (%s)", subKey, feedURL)
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							log.Printf("[auto-sub] panic in %s: %v", subKey, r)
-						}
-					}()
-					if s.Agent != nil && e.Cid != "" {
-						// Backward compat: old subs carry the filter in e.Filter
-						// rather than in the URL. A keyword already present in the
-						// URL wins, so explicit filters are never overridden.
-						rssURL := ensureKeywordParam(feedURL, e.Filter)
-						before := globalDedup.SubCount(subKey)
-						names := s.Agent.ProcessRSSFeed(rssURL, e.Cid, e.SavePath, subKey)
-						after := globalDedup.SubCount(subKey)
-						newItems := after - before
-						if newItems > 0 {
-							notify.RecordItems(subKey, names)
-							notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), true)
-						}
-					}
-				}()
-
-				// Check for failures via dedup cache (if no new items added, might be a fetch error)
-				// We track failures implicitly: if a feed runs but produces errors, the ProcessRSSFeed logs them.
-				// For now, clear retry state on successful run.
-				delete(retryMap, subKey)
-				ran++
-				time.Sleep(30 * time.Second)
+				if !now.Before(st.nextRun) {
+					due = append(due, e)
+				}
+			}
+		}
+		// Drop state for subscriptions that were deleted or disabled.
+		for name := range states {
+			if !seen[name] {
+				delete(states, name)
 			}
 		}
 
-		if ran == 0 {
-			log.Printf("[auto-sub] no enabled subscriptions, sleeping %d min", cycleInterval)
-		} else {
-			log.Printf("[auto-sub] cycle complete: %d feeds ran, next cycle in %d min", ran, cycleInterval)
+		ran, failed := 0, 0
+		for i, e := range due {
+			if i > 0 {
+				time.Sleep(subFeedGap)
+			}
+			log.Printf("[auto-sub] 执行: %s", e.Name)
+			newItems, err := s.runSubscription(e.Name, e.URL, e.Cid, e.SavePath, e.Filter)
+
+			st := states[e.Name]
+			if st == nil {
+				continue
+			}
+			if errors.Is(err, errSubsAlreadyRunning) {
+				// Running elsewhere; leave the schedule alone so this pass counts
+				// as neither a success nor a failure.
+				log.Printf("[auto-sub] %s 正在被其他操作执行，本轮跳过", e.Name)
+				continue
+			}
+			if err != nil {
+				failed++
+				st.failures++
+				backoff := retryBackoff(st.failures)
+				st.nextRun = time.Now().Add(backoff)
+				log.Printf("[auto-sub] 失败 %s（连续第 %d 次）: %v；%s 后重试",
+					e.Name, st.failures, err, backoff)
+				continue
+			}
+			ran++
+			st.failures = 0
+			st.nextRun = time.Now().Add(cycle)
+			if newItems > 0 {
+				log.Printf("[auto-sub] %s 新增 %d 条", e.Name, newItems)
+			}
 		}
 
-		// Schedule retries for failed feeds
-		// We check ProcessRSSFeed logs indirectly - any feed that consistently fails
-		// will be retried in the next cycle automatically via the loop above.
-		// For active retry with backoff, we rely on ProcessRSSFeed's internal error handling
-		// and the fact that the main cycle will retry all enabled feeds.
-
-		time.Sleep(time.Duration(cycleInterval) * time.Minute)
+		// Sleep until the earliest pending run, never past one cycle: the
+		// subscription list may be edited in the meantime.
+		wait := cycle
+		for _, st := range states {
+			if d := time.Until(st.nextRun); d > 0 && d < wait {
+				wait = d
+			}
+		}
+		if wait < time.Second {
+			wait = time.Second
+		}
+		if len(due) == 0 {
+			log.Printf("[auto-sub] 无可执行的订阅，%s 后检查", wait.Round(time.Second))
+		} else {
+			log.Printf("[auto-sub] 本轮 %d 成功 / %d 失败，%s 后检查",
+				ran, failed, wait.Round(time.Second))
+		}
+		time.Sleep(wait)
 	}
 }
 
@@ -1850,12 +1969,20 @@ func (s *Server) handleRSSFeed(w http.ResponseWriter, r *http.Request) {
 		s.renderMsg(w, "", "err_rss_empty")
 		return
 	}
-	// ProcessRSSFeed only reads the keyword parameter from the URL, so the form
-	// field must be merged in. subKey intentionally stays the bare URL to keep
-	// existing dedup cache keys stable.
-	feedURL := ensureKeywordParam(rssURL, keyword)
-	go s.Agent.ProcessRSSFeed(feedURL, cid, savepath, rssURL)
-	log.Printf("[feed] web triggered: %s keyword=%q cid=%s savepath=%q", feedURL, keyword, cid, savepath)
+	// The keyword is merged into the URL by runSubscription, which is also where
+	// the dedup accounting and notification live so this path cannot diverge from
+	// the scheduler. subKey intentionally stays the bare URL to keep existing
+	// dedup cache keys stable.
+	subKey := rssURL
+	go func() {
+		newItems, err := s.runSubscription(subKey, rssURL, cid, savepath, keyword)
+		if err != nil {
+			log.Printf("[feed] 快速执行失败 %s: %v", subKey, err)
+			return
+		}
+		log.Printf("[feed] 快速执行完成 %s，新增 %d 条", subKey, newItems)
+	}()
+	log.Printf("[feed] web triggered: %s keyword=%q cid=%s savepath=%q", rssURL, keyword, cid, savepath)
 	s.renderMsgf(w, "quick_started_fmt", rssURL)
 }
 
@@ -5339,10 +5466,31 @@ func parseIndexerFromRSSURL(rssURL string) string {
 	return strings.Join(parts, ", ")
 }
 
-func (s *Server) readRssFeeds() map[string][]rssFeedEntry {
+// readRssFeedsErr reads the subscription file and reports why it failed.
+//
+// The difference matters to the scheduler: a missing file on first run is normal,
+// but an unreadable or corrupt one is a fault that should be logged as such
+// rather than reported as "no subscriptions".
+func (s *Server) readRssFeedsErr() (map[string][]rssFeedEntry, error) {
 	feeds := make(map[string][]rssFeedEntry)
-	if data, err := os.ReadFile(rssJsonPath); err == nil {
-		json.Unmarshal(data, &feeds)
+
+	data, err := os.ReadFile(rssJsonPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return feeds, nil // first run: nothing configured yet
+		}
+		return feeds, fmt.Errorf("read %s: %w", rssJsonPath, err)
+	}
+	if err := json.Unmarshal(data, &feeds); err != nil {
+		return make(map[string][]rssFeedEntry), fmt.Errorf("parse %s: %w", rssJsonPath, err)
+	}
+	return feeds, nil
+}
+
+func (s *Server) readRssFeeds() map[string][]rssFeedEntry {
+	feeds, err := s.readRssFeedsErr()
+	if err != nil {
+		log.Printf("[subs] %v", err)
 	}
 	return feeds
 }
@@ -5438,15 +5586,14 @@ func (s *Server) handleSubsRun(w http.ResponseWriter, r *http.Request) {
 	// Merge the filter field into the URL. ProcessRSSFeed only reads the keyword
 	// parameter from the URL, so passing filter separately would silently drop it.
 	// subKey is derived above, keeping dedup cache keys stable across filter edits.
-	feedURL := ensureKeywordParam(rssURL, filter)
+	// runSubscription owns the keyword merge, the dedup accounting and the
+	// notification, so this path and the scheduler behave identically. subKey is
+	// derived above, keeping dedup cache keys stable across filter edits.
 	go func() {
-		before := globalDedup.SubCount(subKey)
-		names := s.Agent.ProcessRSSFeed(feedURL, cid, savepath, subKey)
-		after := globalDedup.SubCount(subKey)
-		newItems := after - before
-		if newItems > 0 {
-			notify.RecordItems(subKey, names)
-			notify.DispatchEvent(notify.RSSFoundEvent(subKey, newItems, names), true)
+		newItems, err := s.runSubscription(subKey, rssURL, cid, savepath, filter)
+		if err != nil {
+			log.Printf("[subs] run failed: %s: %v", subKey, err)
+			return
 		}
 		log.Printf("[subs] run completed: %s, new=%d", subKey, newItems)
 	}()

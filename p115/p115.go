@@ -613,7 +613,15 @@ func matchKeyword(title, keyword string) bool {
 // ProcessRSSFeed fetches an RSS feed, filters by keyword, and submits all matches.
 // Phase 1: lightweight info-hash extraction + dedup check (no torrent download).
 // Phase 2: resolve full magnet only for items that pass dedup.
-func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
+//
+// The error return distinguishes "the feed could not be read or the submission
+// failed" from "there was nothing new", which both used to come back as nil. A
+// caller that only sees nil cannot tell a broken feed from a quiet one, so it
+// cannot retry the failures without also retrying the quiet ones.
+//
+// On a partial submission failure the returned names cover only the chunks that
+// were actually accepted, so a notification never claims more than was submitted.
+func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string, error) {
 	// Extract keyword from RSS URL
 	keyword := ""
 	if u, err := url.Parse(rssURL); err == nil {
@@ -622,7 +630,7 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 	feed := rsssite.GetFeed(rssURL)
 	if feed == nil {
 		log.Printf("[feed] failed to fetch RSS: %s", rssURL)
-		return nil
+		return nil, fmt.Errorf("fetch RSS failed: %s", rssURL)
 	}
 
 	log.Printf("[feed] processing subKey=%q, items=%d, keyword=%q", subKey, len(feed.Items), keyword)
@@ -706,7 +714,8 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 		default:
 			log.Printf("[feed] no items found in %s", rssURL)
 		}
-		return nil
+		// Nothing new is not a failure: the feed was read successfully.
+		return nil, nil
 	}
 	log.Printf("[feed] found %d NEW items, submitting to cid=%s", len(candidates), cid)
 
@@ -716,12 +725,16 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 		magnets = append(magnets, c.magnet)
 		names = append(names, c.title)
 	}
+	// submitted counts the names whose chunk was accepted, so a partial failure
+	// reports exactly what went through.
+	submitted := 0
 	for i, urls := range chunkBy(magnets, defaultChunkSize) {
 		_, err := ag.Agent.OfflineAddUrl(urls, &option.OfflineAddOptions{SaveDirId: cid, SavePath: savepath})
 		if err != nil {
 			log.Printf("[feed] error: %v", err)
-			return names
+			return names[:submitted], fmt.Errorf("submit to 115 failed: %w", err)
 		}
+		submitted += len(urls)
 		log.Printf("[feed] chunk %d: submitted %d tasks", i+1, len(urls))
 		if ag.Dedup != nil {
 			for _, u := range urls {
@@ -733,7 +746,7 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) []string {
 			time.Sleep(time.Second * time.Duration(chunkDelay))
 		}
 	}
-	return names
+	return names, nil
 }
 
 // AppSettings holds runtime-configurable application settings.

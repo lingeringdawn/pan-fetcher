@@ -112,9 +112,9 @@ type recordingAgent struct {
 	calls chan feedCall
 }
 
-func (r *recordingAgent) ProcessRSSFeed(feedURL, cid, savepath, subKey string) []string {
+func (r *recordingAgent) ProcessRSSFeed(feedURL, cid, savepath, subKey string) ([]string, error) {
 	r.calls <- feedCall{url: feedURL, cid: cid, savepath: savepath, subKey: subKey}
-	return nil
+	return nil, nil
 }
 
 func newRecordingServer(t *testing.T) (*recordingAgent, *http.ServeMux) {
