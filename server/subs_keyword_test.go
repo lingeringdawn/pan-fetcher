@@ -502,7 +502,7 @@ func TestEffectiveFilterPrefersURLKeyword(t *testing.T) {
 // carry the filter that lives in the URL.
 func TestSubsPageShowsFilterFromURL(t *testing.T) {
 	withTempRssJSON(t, rssFeedEntry{
-		Name: "侦探已死",
+		Name: "示例番剧",
 		URL:  "/rss/search?q=x&keyword=group%3ANEST+language%3A%E7%AE%80%E6%97%A5%E5%86%85%E5%B0%81",
 		Cid:  "cid-1", Enabled: true,
 	})

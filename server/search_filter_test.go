@@ -197,16 +197,16 @@ func TestApplyTitleFilterNormalization(t *testing.T) {
 // normaliser must not strip non-ASCII runes as punctuation.
 func TestApplyTitleFilterCJK(t *testing.T) {
 	in := titles(
-		"[Nekomoe kissaten] 侦探已死 - 01 [1080p]",
-		"侦探已死 第01话",
+		"[Nekomoe kissaten] 示例番剧 - 01 [1080p]",
+		"示例番剧 第01话",
 		"完全无关的另一部动画 01",
 	)
-	got := gotTitles(applyTitleFilter(in, "侦探已死"))
+	got := gotTitles(applyTitleFilter(in, "示例番剧"))
 	if len(got) != 2 {
 		t.Fatalf("kept %d, want 2: %v", len(got), got)
 	}
 	for _, g := range got {
-		if !strings.Contains(g, "侦探已死") {
+		if !strings.Contains(g, "示例番剧") {
 			t.Errorf("unrelated title kept: %q", g)
 		}
 	}
@@ -282,7 +282,7 @@ func TestNormalizeForMatch(t *testing.T) {
 		{"TARI[TARI]", "tari tari"},
 		{"  TARI   TARI  ", "tari tari"},
 		{"[Group] TARI TARI - 01", "group tari tari 01"},
-		{"侦探已死", "侦探已死"},
+		{"示例番剧", "示例番剧"},
 		{"", ""},
 		{"...", ""},
 	}

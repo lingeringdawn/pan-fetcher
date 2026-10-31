@@ -643,6 +643,7 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string,
 	skippedKeyword := 0
 	skippedPhase1 := 0
 	skippedPhase2 := 0
+	extractFailed := 0
 
 	for _, item := range feed.Items {
 		if keyword != "" {
@@ -671,6 +672,13 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string,
 			magnet = rsssite.ExtractMagnetFromText(item.Description)
 		}
 		if magnet == "" {
+			// An item that advertises a torrent but yielded none means the fetch
+			// failed (the indexer endpoint timed out, say). That is different from
+			// an entry that simply carries no magnet, and the caller should retry
+			// instead of treating this cycle as "nothing new".
+			if rsssite.HasTorrentEnclosure(item) {
+				extractFailed++
+			}
 			continue
 		}
 		// Phase 2 dedup check (after torrent download + conversion if needed)
@@ -713,6 +721,12 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string,
 				dedupSkipped, kwLabel, rssURL)
 		default:
 			log.Printf("[feed] no items found in %s", rssURL)
+		}
+		// Nothing new is not automatically a failure — but a torrent that would
+		// not resolve is, and reporting it lets the scheduler back off and retry
+		// instead of waiting out a full cycle.
+		if extractFailed > 0 {
+			return nil, fmt.Errorf("%d torrent link(s) could not be resolved", extractFailed)
 		}
 		// Nothing new is not a failure: the feed was read successfully.
 		return nil, nil

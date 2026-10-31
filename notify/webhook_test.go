@@ -75,7 +75,7 @@ func TestWebhookChannelSignsRequest(t *testing.T) {
 		Time:  time.Date(2026, 10, 15, 16, 0, 0, 0, time.UTC),
 		Title: "RSS 新资源",
 		Body:  "## RSS 新资源",
-		Data:  map[string]interface{}{"sub": "侦探已死", "count": 2},
+		Data:  map[string]interface{}{"sub": "示例番剧", "count": 2},
 	}
 	if err := ch.Send(ev); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -108,7 +108,7 @@ func TestWebhookChannelSignsRequest(t *testing.T) {
 	if payload.Type != string(EventRSSFound) || payload.Title != "RSS 新资源" {
 		t.Errorf("payload fields wrong: %+v", payload)
 	}
-	if payload.Data["sub"] != "侦探已死" {
+	if payload.Data["sub"] != "示例番剧" {
 		t.Errorf("structured data missing or mangled: %+v", payload.Data)
 	}
 }

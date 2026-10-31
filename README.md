@@ -115,7 +115,7 @@ X-Pan-Fetcher-Delivery: <投递 id>
 
 {"type":"rss.found","time":"2026-10-15T17:20:12+08:00",
  "title":"RSS 新资源","body":"## RSS 新资源...",
- "data":{"sub":"侦探已死","count":2,"names":["..."]}}
+ "data":{"sub":"订阅名称","count":2,"names":["..."]}}
 ```
 
 签名对**请求体原文**计算 HMAC-SHA256。`X-Pan-Fetcher-Delivery` 在重试时保持不变，接收端可据此去重。投递仅对网络错误与 5xx 重试一次，4xx 不重试；投递异步执行，接收端故障不影响下载。

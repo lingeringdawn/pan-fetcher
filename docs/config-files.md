@@ -39,7 +39,7 @@ savepath = "动画"
     {
       "name": "订阅名称",
       "url": "http://127.0.0.1:8115/rss/search?...",
-      "cid": "3461973339503854771",
+      "cid": "115目录ID",
       "savepath": "子目录",
       "enabled": true
     }
