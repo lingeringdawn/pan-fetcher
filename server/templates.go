@@ -513,6 +513,30 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
       });
     }
+
+    // openSubForm shows the add-subscription dialog.
+    //
+    // Two callers with different needs: the "+ RSS" chip on the search page
+    // subscribes the current search, so it passes a prefilled internal URL and
+    // name; the button on the subscriptions page adds an arbitrary feed, so it
+    // passes empty values and the user types their own address.
+    //
+    // Pass null (not "") for url to leave the field empty rather than clearing
+    // it, so a caller can prefill only part of the form.
+    function openSubForm(url, name){
+      var sf=document.getElementById('sub-form');
+      if(!sf)return;
+      document.getElementById('sub-query').value = name || '';
+      document.getElementById('sub-name').value = name || '';
+      document.getElementById('sub-url').value = url || '';
+      sf.style.display='flex';
+      // Focus the address field when starting blank: that is the one the user
+      // came here to fill in.
+      if(!url){
+        var input=document.getElementById('sub-url');
+        if(input)input.focus();
+      }
+    }
     var modalCb=null;
     function showModal(title,body,buttons){
       document.getElementById('g-modal-title').textContent=title;
@@ -745,6 +769,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     {{if eq .Page "subs"}}
     <div class="card panel">
       <h2>{{index .T "subs_mgmt"}} ({{len .RssSubs}})
+        <button type="button" onclick="openSubForm('','')" title="{{index .T "add_sub_hint"}}"
+          style="float:right;margin:0;padding:5px 14px;font-size:13px;background:var(--accent-2);">{{index .T "add_sub_btn"}}</button>
         {{if not .RssSubs}}<span style="font-weight:400;font-size:12px;color:var(--muted);margin-left:8px;">{{index .T "no_subs_hint"}}</span>{{end}}
       </h2>
       {{if .RssSubs}}
@@ -1298,7 +1324,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       function mkChip(t,f,isA){var c=document.createElement('span');c.textContent=t;c.setAttribute('data-filter',f);c.style.cssText='padding:3px 10px;border-radius:12px;font-size:11px;white-space:nowrap;cursor:pointer;background:'+(isA?'var(--accent)':'var(--bg)')+';color:'+(isA?'#fff':'')+';border:1px solid '+(isA?'var(--accent)':'var(--line)');return c;}
       var top=document.createElement('div');top.style.cssText='display:flex;flex-wrap:wrap;gap:6px;align-items:center;';top.appendChild(mkChip('全部','',!hasKw));
       var rss=document.createElement('span');rss.textContent='+ RSS';rss.id='chip-rss-btn';rss.style.cssText='padding:4px 14px;border-radius:14px;background:var(--accent-2);color:#fff;cursor:pointer;font-size:12px;margin-left:auto;';
-      rss.onclick=function(){var sf=document.getElementById('sub-form');if(sf){var q=rssQuery||'';document.getElementById('sub-query').value=q;document.getElementById('sub-name').value=q;var u='/rss/search?q='+encodeURIComponent(q);var form=document.getElementById('search-form');if(form){var fd=new FormData(form);var s=fd.get('sort');if(s)u+='&sort='+encodeURIComponent(s);var idx=fd.getAll('indexer');if(idx.length)u+='&indexers='+encodeURIComponent(idx.join(','));}var fl=buildGroupKeyword();if(fl)u+='&keyword='+encodeURIComponent(fl);document.getElementById('sub-url').value=u;sf.style.display='flex';}};
+      rss.onclick=function(){
+        var q=rssQuery||'';
+        var u='/rss/search?q='+encodeURIComponent(q);
+        var form=document.getElementById('search-form');
+        if(form){
+          var fd=new FormData(form);
+          var s=fd.get('sort');if(s)u+='&sort='+encodeURIComponent(s);
+          var idx=fd.getAll('indexer');if(idx.length)u+='&indexers='+encodeURIComponent(idx.join(','));
+        }
+        var fl=buildGroupKeyword();if(fl)u+='&keyword='+encodeURIComponent(fl);
+        openSubForm(u,q);
+      };
       top.appendChild(rss);bar.appendChild(top);
       var cats={},co=[],cl={group:'{{index .T "chip_group"}}',source:'{{index .T "chip_source"}}',codec:'{{index .T "chip_codec"}}',resolution:'{{index .T "chip_resolution"}}',language:'{{index .T "chip_language"}}',container:'{{index .T "chip_container"}}',season:'{{index .T "chip_season"}}',other:'{{index .T "chip_other"}}'};
       groups.forEach(function(g){var ck;if(catMap&&catMap[g])ck=catMap[g];else{var cl2=classifyTag(g);if(!cl2)return;ck=cl2.cat;}if(!cats[ck]){cats[ck]={label:cl[ck]||ck,tags:[],key:ck};co.push(ck);}cats[ck].tags.push(g);});
@@ -3199,10 +3236,14 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <form action="/search/subscribe" method="post">
         <input type="hidden" name="query" id="sub-query">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-          <div style="flex:2;min-width:120px;"><label style="font-size:12px;">{{index .T "sub_name_label"}}</label><input name="name" id="sub-name" style="font-size:13px;"></div>
-          <div style="flex:2;min-width:160px;"><label style="font-size:12px;">{{index .T "rss_addr_label"}}</label><input name="url" id="sub-url" style="font-size:13px;"></div>
+          <div style="flex:2;min-width:120px;"><label style="font-size:12px;">{{index .T "sub_name_label"}}</label><input name="name" id="sub-name" placeholder="{{index .T "add_sub_name_ph"}}" style="font-size:13px;"></div>
+          <div style="flex:2;min-width:160px;"><label style="font-size:12px;">{{index .T "rss_addr_label"}}</label><input name="url" id="sub-url" placeholder="{{index .T "add_sub_url_ph"}}" style="font-size:13px;"></div>
           <div style="flex:1;min-width:200px;"><label style="font-size:12px;">{{index .T "dir_id_opt"}} / {{index .T "subdir_opt"}}</label><div style="display:flex;gap:4px;"><input name="cid" id="sub-cid" placeholder="cid" style="font-size:13px;flex:1;"><input name="savepath" placeholder="{{index .T "subdir_opt"}}" style="font-size:13px;flex:1;"><button type="button" onclick="browseDirsFor('sub-cid')" title="{{index .T "browse_btn"}}" style="font-size:13px;padding:4px 8px;margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;cursor:pointer;">{{index .T "browse_btn"}}</button></div></div>
         </div>
+        <!-- Says what can go in the address field, because "just a feed URL" is
+             not the constraint the caller runs into: the feed itself has to carry
+             a magnet or torrent link per entry. -->
+        <div class="hint" style="margin-top:8px;font-size:11px;line-height:1.6;">{{index .T "sub_form_hint"}}</div>
         <div style="margin-top:10px;text-align:right;">
           <button type="submit" style="margin-top:0;background:var(--accent-2);">{{index .T "add_sub_btn"}}</button>
         </div>

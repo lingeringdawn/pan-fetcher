@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lingeringdawn/pan-fetcher/indexer"
 )
@@ -81,9 +82,6 @@ func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {
 	filter := strings.TrimSpace(r.FormValue("filter"))
 	cid := strings.TrimSpace(r.FormValue("cid"))
 	savepath := strings.TrimSpace(r.FormValue("savepath"))
-	if name == "" {
-		name = q
-	}
 
 	if rssURL == "" && q != "" {
 		// Auto-build local aggregated RSS URL
@@ -94,6 +92,23 @@ func (s *Server) handleSearchSubscribe(w http.ResponseWriter, r *http.Request) {
 		data.SearchQuery = q
 		dashboardTemplate.Execute(w, data)
 		return
+	}
+
+	// Derive a name when the form left it blank.
+	//
+	// The name doubles as the deduplication key, so an empty one would make every
+	// unnamed subscription share a cache bucket and silently suppress each
+	// other's releases. Falling back to the feed's host keeps them distinct and
+	// still recognisable.
+	if name == "" {
+		name = q
+	}
+	if name == "" {
+		if u, err := url.Parse(rssURL); err == nil && u.Host != "" {
+			name = u.Host
+		} else {
+			name = "RSS " + time.Now().Format("0102-1504")
+		}
 	}
 
 	// Save to rss.json
