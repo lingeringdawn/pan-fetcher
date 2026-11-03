@@ -357,9 +357,12 @@ func isTransientP115Error(err error) bool {
 //
 // Each attempt rebuilds the encrypted payload, so a retry is a clean second
 // request rather than a replay of a spent one.
+//
+// An outage is not retried: when 115 answers 502/503/504 the service is down, and
+// a second attempt only adds another wait before the same answer.
 func retryP115(what string, fn func() error) error {
 	err := fn()
-	if !isTransientP115Error(err) {
+	if isOutage(err) || !isTransientP115Error(err) {
 		return err
 	}
 	log.Printf("[p115] %s 返回异常（%v），重试一次", what, err)
@@ -377,6 +380,10 @@ func retryP115(what string, fn func() error) error {
 func explainP115Error(err error) error {
 	if err == nil {
 		return nil
+	}
+	// An outage already carries a clear message of its own.
+	if isOutage(err) {
+		return err
 	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
@@ -1090,5 +1097,8 @@ func newElevengoAgent() *elevengo.Agent {
 		}
 		opts.WithCooldown(minMs, maxMs)
 	}
+	// Route requests through apiClient so a 115 outage is reported as one, and so
+	// the SDK's retry actually re-sends the body.
+	opts.WithHttpClient(newAPIClient(newTransportClient()))
 	return elevengo.New(opts)
 }
