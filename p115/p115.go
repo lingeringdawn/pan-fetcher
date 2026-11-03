@@ -198,7 +198,7 @@ func (ag *Agent) addCloudTasks(magnetItems []rsssite.MagnetItem, config *rsssite
 		}
 		_, err := ag.Agent.OfflineAddUrl(urls, &option.OfflineAddOptions{SaveDirId: config.Cid, SavePath: config.SavePath})
 		if err != nil {
-			log.Printf("Add offline error: %s\n", err)
+			log.Printf("Add offline error: %v\n", explainP115Error(err))
 			return
 		}
 		log.Printf("[%s] [%s] add %d tasks\n", config.Name, config.Url, len(urls))
@@ -297,7 +297,7 @@ func (ag *Agent) ProcessRssWithSubscriptions(rssURL string) {
 			SavePath:  savepath,
 		})
 		if err != nil {
-			log.Printf("[subscribe] submit error for %s: %v", title, err)
+			log.Printf("[subscribe] submit error for %s: %v", title, explainP115Error(err))
 			continue
 		}
 
@@ -333,6 +333,32 @@ func (ag *Agent) ExecuteAllRssTask() {
 			}
 		}
 	}
+}
+
+// explainP115Error turns SDK-level failures into something the user can act on.
+//
+// Responses from 115 are encrypted with their EC scheme. A CRC mismatch surfaces
+// as "invalid ec data", which says nothing useful: it means the body was not the
+// encrypted payload the client expected, and in practice that happens when the
+// session has expired and 115 answers with a login or risk-control page instead
+// of data.
+//
+// Reported verbatim, that string leaves the user guessing. Mapped here, it points
+// at the actual fix.
+func explainP115Error(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "invalid ec data"):
+		return errors.New("115 登录已失效，请在设置页重新登录或更新 Cookies")
+	case strings.Contains(msg, "401") || strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "not login") || strings.Contains(lower, "not logged in"):
+		return errors.New("115 授权失败，请重新登录")
+	}
+	return err
 }
 
 func (ag *Agent) AddMagnetTask(tasks []string, cid string, savepath string) error {
@@ -388,7 +414,7 @@ func (ag *Agent) AddMagnetTask(tasks []string, cid string, savepath string) erro
 			_, err := ag.Agent.OfflineAddUrl(urls, &option.OfflineAddOptions{SaveDirId: cid, SavePath: savepath})
 			if err != nil {
 				log.Printf("[%s] add offline error: %s\n", b.kind, err)
-				return fmt.Errorf("add %s failed: %v", b.kind, err)
+				return fmt.Errorf("add %s failed: %w", b.kind, explainP115Error(err))
 			}
 			submitted += len(urls)
 			log.Printf("[%s] add %d tasks\n", b.kind, len(urls))
@@ -746,7 +772,7 @@ func (ag *Agent) ProcessRSSFeed(rssURL, cid, savepath, subKey string) ([]string,
 		_, err := ag.Agent.OfflineAddUrl(urls, &option.OfflineAddOptions{SaveDirId: cid, SavePath: savepath})
 		if err != nil {
 			log.Printf("[feed] error: %v", err)
-			return names[:submitted], fmt.Errorf("submit to 115 failed: %w", err)
+			return names[:submitted], fmt.Errorf("submit to 115 failed: %w", explainP115Error(err))
 		}
 		submitted += len(urls)
 		log.Printf("[feed] chunk %d: submitted %d tasks", i+1, len(urls))
