@@ -123,6 +123,11 @@ func TestExplainP115ErrorDoesNotBlameSession(t *testing.T) {
 	if !strings.Contains(got.Error(), "重试") {
 		t.Errorf("the message should say a retry already happened: %q", got.Error())
 	}
+	// The cause is not decryption and not necessarily the session; naming either
+	// one sends the user down the wrong path.
+	if strings.Contains(got.Error(), "解密") {
+		t.Errorf("a failed checksum must not be described as a decryption problem: %q", got.Error())
+	}
 }
 
 // TestExplainP115ErrorMapsAuthFailures verifies genuine auth errors still point

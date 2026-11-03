@@ -1,7 +1,6 @@
 package p115
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +8,8 @@ import (
 	"testing"
 )
 
-// countingServer records how many requests it saw and whether each body arrived
-// intact.
-func countingServer(t *testing.T, status int, wantBody string) (*httptest.Server, *int, *[]string) {
+// newCountingServer records every request and the body each one delivered.
+func newCountingServer(t *testing.T, status int) (*httptest.Server, *int, *[]string) {
 	t.Helper()
 	calls := 0
 	bodies := []string{}
@@ -26,33 +24,36 @@ func countingServer(t *testing.T, status int, wantBody string) (*httptest.Server
 	return srv, &calls, &bodies
 }
 
-// TestAPIClientReportsOutage is the regression test for misreported failures.
+// TestAPIClientPassesErrorStatusThrough is the regression test for a crash.
 //
-// A failing gateway answers with an HTML page. Left alone the SDK tries to
-// decrypt it and reports "invalid ec data", which sends the user looking at their
-// login while 115 is simply down.
-func TestAPIClientReportsOutage(t *testing.T) {
+// The SDK's Get/Post shadow the error from send, so a transport error becomes
+// (nil body, nil error) and CallApi hands that nil body to spec.Parse, which
+// panics in encoding/json. Turning a 502 into an error here made that path
+// reachable and killed the process on startup.
+//
+// The client must therefore return the response untouched and let the caller deal
+// with a body it cannot decrypt.
+func TestAPIClientPassesErrorStatusThrough(t *testing.T) {
 	for _, status := range []int{
 		http.StatusBadGateway,
 		http.StatusServiceUnavailable,
 		http.StatusGatewayTimeout,
 	} {
-		srv, _, _ := countingServer(t, status, "")
+		srv, _, _ := newCountingServer(t, status)
 		c := newAPIClient(newTransportClient())
 
 		req, _ := http.NewRequest("POST", srv.URL, strings.NewReader("data=x"))
-		_, err := c.Do(req)
-		if err == nil {
-			t.Fatalf("status %d should be reported as an outage", status)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatalf("status %d must not be converted to an error (it crashes the SDK): %v", status, err)
 		}
-		if !isOutage(err) {
-			t.Errorf("status %d: want an outage error, got %v", status, err)
+		if resp == nil {
+			t.Fatalf("status %d: response must not be nil", status)
 		}
-		if !strings.Contains(err.Error(), "115") {
-			t.Errorf("status %d: message should name 115, got %q", status, err.Error())
-		}
-		if strings.Contains(err.Error(), "invalid ec data") {
-			t.Errorf("status %d: decryption wording must not leak through", status)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != status {
+			t.Errorf("status = %d, want %d", resp.StatusCode, status)
 		}
 	}
 }
@@ -83,10 +84,10 @@ func TestAPIClientPassesThroughSuccess(t *testing.T) {
 // The SDK retries a timed-out request by calling Do again on the same
 // *http.Request. Its body is a one-shot reader, so without this the retry sends
 // nothing and fails with "ContentLength=N with Body length 0" — hiding the
-// timeout.
+// timeout that prompted it.
 func TestAPIClientReplaysBody(t *testing.T) {
 	const payload = "data=encrypted-blob-content"
-	srv, calls, bodies := countingServer(t, http.StatusOK, payload)
+	srv, calls, bodies := newCountingServer(t, http.StatusOK)
 
 	c := newAPIClient(newTransportClient())
 	req, _ := http.NewRequest("POST", srv.URL, strings.NewReader(payload))
@@ -111,44 +112,37 @@ func TestAPIClientReplaysBody(t *testing.T) {
 	}
 }
 
-// TestRetryP115SkipsOutage verifies an outage is not retried.
-//
-// Retrying a 502 only doubles the wait before the same answer.
-func TestRetryP115SkipsOutage(t *testing.T) {
-	calls := 0
-	err := retryP115("test", func() error {
-		calls++
-		return &UpstreamError{Status: http.StatusBadGateway}
-	})
-	if err == nil {
-		t.Fatal("an outage must be reported")
+// TestAPIClientForgetsBodyAfterSuccess verifies the replay cache does not keep
+// every finished request alive.
+func TestAPIClientForgetsBodyAfterSuccess(t *testing.T) {
+	srv, _, _ := newCountingServer(t, http.StatusOK)
+	c := newAPIClient(newTransportClient())
+
+	req, _ := http.NewRequest("POST", srv.URL, strings.NewReader("data=x"))
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if calls != 1 {
-		t.Errorf("an outage should be attempted once, got %d attempts", calls)
-	}
-	if !isOutage(err) {
-		t.Errorf("the outage should surface unchanged, got %v", err)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	c.mu.Lock()
+	left := len(c.bodys)
+	c.mu.Unlock()
+	if left != 0 {
+		t.Errorf("cache still holds %d entries after success", left)
 	}
 }
 
-// TestExplainP115ErrorKeepsOutageMessage verifies the outage wording is not
-// replaced by the generic decryption hint.
-func TestExplainP115ErrorKeepsOutageMessage(t *testing.T) {
-	got := explainP115Error(&UpstreamError{Status: http.StatusBadGateway})
-	if got == nil || !strings.Contains(got.Error(), "不可用") {
-		t.Errorf("want the outage message, got %v", got)
-	}
-	if strings.Contains(got.Error(), "解密") {
-		t.Errorf("an outage must not be described as a decryption failure: %q", got.Error())
-	}
-}
+// TestAPIClientBodylessRequest verifies a request without a body is handled.
+func TestAPIClientBodylessRequest(t *testing.T) {
+	srv, _, _ := newCountingServer(t, http.StatusOK)
+	c := newAPIClient(newTransportClient())
 
-// TestIsOutageOnPlainError verifies ordinary errors are not mistaken for outages.
-func TestIsOutageOnPlainError(t *testing.T) {
-	if isOutage(errors.New("invalid ec data")) {
-		t.Error("a decryption error is not an outage")
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if isOutage(nil) {
-		t.Error("nil is not an outage")
-	}
+	resp.Body.Close()
 }

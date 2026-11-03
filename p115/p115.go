@@ -357,12 +357,10 @@ func isTransientP115Error(err error) bool {
 //
 // Each attempt rebuilds the encrypted payload, so a retry is a clean second
 // request rather than a replay of a spent one.
-//
-// An outage is not retried: when 115 answers 502/503/504 the service is down, and
-// a second attempt only adds another wait before the same answer.
+
 func retryP115(what string, fn func() error) error {
 	err := fn()
-	if isOutage(err) || !isTransientP115Error(err) {
+	if !isTransientP115Error(err) {
 		return err
 	}
 	log.Printf("[p115] %s 返回异常（%v），重试一次", what, err)
@@ -381,15 +379,11 @@ func explainP115Error(err error) error {
 	if err == nil {
 		return nil
 	}
-	// An outage already carries a clear message of its own.
-	if isOutage(err) {
-		return err
-	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
 	switch {
 	case isTransientP115Error(err):
-		return errors.New("115 响应异常（解密失败），已重试仍失败，请稍后再试；若持续出现请检查登录状态")
+		return errors.New("115 响应异常，已重试仍失败，请稍后再试；若持续出现请检查 115 服务状态与登录状态")
 	case strings.Contains(msg, "401") || strings.Contains(lower, "unauthorized") ||
 		strings.Contains(lower, "not login") || strings.Contains(lower, "not logged in"):
 		return errors.New("115 授权失败，请重新登录")
