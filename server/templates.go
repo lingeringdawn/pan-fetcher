@@ -2020,8 +2020,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         fetch('/search/clear-cache',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(){location.href='/search';});
       }
       // Bulk selection: every result row carries a checkbox and the toolbar above
-      // the table acts on whatever is ticked.
-      var pendingMagnets=[];
+      // the table acts on whatever is ticked. Each pending entry keeps its title,
+      // otherwise the notification has no name to show and prints the raw link.
+      var pendingItems=[];
 
       // Note: searchTotal, pageSize, currentPage, totalPages, searchDone
       // are declared above in the search page template section.
@@ -2113,8 +2114,10 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }
       function addSelectedTasks(){
         var items=selectedResults();
-        pendingMagnets=items.map(function(el){return el.getAttribute('data-magnet');}).filter(Boolean);
-        if(!pendingMagnets.length)return;
+        pendingItems=items.map(function(el){
+          return {magnet: el.getAttribute('data-magnet'), title: el.getAttribute('data-title')||''};
+        }).filter(function(x){return x.magnet;});
+        if(!pendingItems.length)return;
         window._browseShowSubdir=true;
         browseCallback=function(id){
           var box=document.getElementById('browse-subdir');
@@ -2126,10 +2129,13 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       }
       async function doAddTasks(cid,savepath){
         closeModal();
-        if(!pendingMagnets.length)return;
-        var count=pendingMagnets.length;
+        if(!pendingItems.length)return;
+        var count=pendingItems.length;
         try{
-          var body='tasks='+encodeURIComponent(pendingMagnets.join('\n'));
+          var tasks=pendingItems.map(function(x){return x.magnet;});
+          var titles=pendingItems.map(function(x){return x.title;});
+          var body='tasks='+encodeURIComponent(tasks.join('\n'))
+            +'&titles='+encodeURIComponent(titles.join('\n'));
           if(cid&&cid!=='0')body+='&cid='+encodeURIComponent(cid);
           if(savepath)body+='&savepath='+encodeURIComponent(savepath);
           var r=await fetch('/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},body:body});
@@ -2144,7 +2150,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
             alertModal(j.message||'{{index .T "add_failed"}}');
           }
         }catch(e){alertModal(e.message);}
-        pendingMagnets=[];
+        pendingItems=[];
       }
       var browseTargetId='sub-cid';
       var browseCallback=null;

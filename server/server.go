@@ -433,7 +433,7 @@ func (d *dedupCache) Add(subKey, magnet string) {
 	}
 	d.subs[subKey][h] = true
 	// Store display name from magnet dn= parameter
-	if name := extractNameFromMagnet(magnet); name != "" {
+	if name := rsssite.ExtractNameFromMagnet(magnet); name != "" {
 		d.hashNames[h] = name
 	}
 }
@@ -681,15 +681,7 @@ func extractInfoHashFromMagnet(magnet string) string {
 	return ""
 }
 
-func extractNameFromMagnet(magnet string) string {
-	for _, part := range strings.Split(magnet, "&") {
-		if strings.HasPrefix(strings.ToLower(part), "dn=") {
-			name, _ := url.QueryUnescape(part[3:])
-			return name
-		}
-	}
-	return ""
-}
+
 
 type webSettings struct {
 	Lang          string `json:"lang"`
@@ -1954,18 +1946,22 @@ func (s *Server) handleAddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[task] web submitted %d tasks, cid=%s", len(task.Tasks), task.Cid)
-	// Extract human-readable names from magnets for notification
-	// Prefer the title from the search result, fall back to magnet dn=
-	title := strings.TrimSpace(r.FormValue("title"))
+	// Display names, in order of preference: the title the caller supplied, the
+	// magnet's dn=, then the download link's file= parameter. The last one matters
+	// because indexers hand back a .torrent URL whose release name lives in the
+	// query string — without it the notification showed the raw URL.
+	titles := strings.Split(r.FormValue("titles"), "\n")
+	singleTitle := strings.TrimSpace(r.FormValue("title"))
 	names := make([]string, 0, len(task.Tasks))
-	for _, m := range task.Tasks {
-		if title != "" {
-			names = append(names, title)
-		} else if n := extractNameFromMagnet(m); n != "" {
-			names = append(names, n)
-		} else {
-			names = append(names, m)
+	for i, m := range task.Tasks {
+		var title string
+		if i < len(titles) {
+			title = titles[i]
 		}
+		if strings.TrimSpace(title) == "" {
+			title = singleTitle
+		}
+		names = append(names, rsssite.TaskDisplayName(m, title))
 	}
 	subKey := "task-" + time.Now().Format("150405")
 	notify.RecordItems(subKey, names)
