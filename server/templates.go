@@ -1158,12 +1158,17 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       </form>
       {{if .SearchResults}}
       <div style="margin-top:16px;" id="search-results-wrap">
-        <table class="tbl" id="search-results"><thead><tr><th>#</th><th>{{index .T "name"}}</th><th>{{index .T "size"}}</th><th>↑</th><th>{{index .T "date_label"}}</th><th>{{index .T "indexer_label"}}</th><th></th></tr></thead><tbody>
+        <div id="batch-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+          <span id="batch-count" style="font-size:12px;color:var(--muted);">{{index .T "batch_none_selected"}}</span>
+          <button type="button" id="batch-add-btn" onclick="addSelectedTasks()" disabled
+            style="margin:0;padding:4px 14px;font-size:12px;background:var(--accent-2);opacity:.5;">{{index .T "batch_add_btn"}}</button>
+        </div>
+        <table class="tbl" id="search-results"><thead><tr><th>#</th><th>{{index .T "name"}}</th><th>{{index .T "size"}}</th><th>↑</th><th>{{index .T "date_label"}}</th><th>{{index .T "indexer_label"}}</th><th style="width:30px;text-align:center;"><input type="checkbox" id="select-all-results" title="{{index .T "select_all"}}" onchange="toggleSelectAllResults(this.checked)" style="cursor:pointer;"></th></tr></thead><tbody>
         {{range $i, $r := .SearchResults}}<tr data-title="{{$r.Title}}" data-group="{{$r.Group}}">
           <td class="muted" style="font-size:11px;text-align:center;">{{add $i 1}}</td>
           <td>{{if $r.PageURL}}<a href="{{$r.PageURL}}" target="_blank">{{$r.Title}}</a>{{else}}{{$r.Title}}{{end}}</td>
           <td class="muted">{{$r.SizeFmt}}</td><td>{{$r.Seeders}}</td><td class="muted" style="font-size:11px;">{{$r.DateFmt}}</td><td class="muted">{{$r.IndexerName}}</td>
-          <td>{{if $r.MagnetURL}}<button data-magnet="{{$r.MagnetURL}}" data-title="{{$r.Title}}" onclick="addTaskWithBrowse(this)" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>{{end}}</td>
+          <td style="text-align:center;">{{if $r.MagnetURL}}<input type="checkbox" class="result-check" data-magnet="{{$r.MagnetURL}}" data-title="{{$r.Title}}" onchange="updateSelectedCount()" style="cursor:pointer;">{{end}}</td>
         </tr>{{end}}</tbody></table>
       <div id="pagination-bar" style="display:flex;justify-content:center;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap;"></div>
       </div>
@@ -1238,6 +1243,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         var tbody=document.querySelector('#search-results tbody');
         if(!tbody)return;
         tbody.innerHTML=j.results.map(function(item,i){return buildRowHTML(item,i,0);}).join('');
+        // Rows were replaced, so any previous ticks are gone; resync the toolbar.
+        updateSelectedCount();
         searchTotal=j.total||0;
         currentPage=1;
         totalPages=searchTotal>0?Math.ceil(searchTotal/pageSize):1;
@@ -2012,8 +2019,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         // Also clear persisted search cache so reload doesn't restore old results
         fetch('/search/clear-cache',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(){location.href='/search';});
       }
-      var pendingMagnet='';
-      var pendingTitle='';
+      // Bulk selection: every result row carries a checkbox and the toolbar above
+      // the table acts on whatever is ticked.
+      var pendingMagnets=[];
 
       // Note: searchTotal, pageSize, currentPage, totalPages, searchDone
       // are declared above in the search page template section.
@@ -2021,8 +2029,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       function buildRowHTML(item, idx, pageStart){
         var num=pageStart+idx+1;
         var title=item.page_url?'<a href="'+item.page_url+'" target="_blank">'+(item.title||'')+'</a>':(item.title||'');
-        var magnetBtn=item.magnet_url?'<button data-magnet="'+item.magnet_url.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" data-title="'+item.title.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'" onclick="addTaskWithBrowse(this)" style="background:var(--accent-2);padding:2px 8px;font-size:11px;margin:0;">+</button>':'';
-        return '<tr data-title="'+(item.title||'')+'" data-group="'+(item.group||'')+'"><td class="muted" style="font-size:11px;text-align:center;">'+num+'</td><td>'+title+'</td><td class="muted">'+(item.size||'-')+'</td><td>'+(item.seeders||0)+'</td><td class="muted" style="font-size:11px;">'+(item.date||'')+'</td><td class="muted">'+(item.indexer||'')+'</td><td>'+magnetBtn+'</td></tr>';
+        var esc=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');};
+        var check=item.magnet_url?'<input type="checkbox" class="result-check" data-magnet="'+esc(item.magnet_url)+'" data-title="'+esc(item.title)+'" onchange="updateSelectedCount()" style="cursor:pointer;">':'';
+        return '<tr data-title="'+esc(item.title)+'" data-group="'+esc(item.group)+'"><td class="muted" style="font-size:11px;text-align:center;">'+num+'</td><td>'+title+'</td><td class="muted">'+(item.size||'-')+'</td><td>'+(item.seeders||0)+'</td><td class="muted" style="font-size:11px;">'+(item.date||'')+'</td><td class="muted">'+(item.indexer||'')+'</td><td style="text-align:center;">'+check+'</td></tr>';
       }
 
       function renderPagination(){
@@ -2066,6 +2075,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
           if(!tbody){renderPagination();return;}
           var pageStart=(page-1)*pageSize;
           tbody.innerHTML=j.results.map(function(item,i){return buildRowHTML(item,i,pageStart);}).join('');
+          updateSelectedCount();
           currentPage=page;
           searchTotal=j.total||0;
           totalPages=searchTotal>0?Math.ceil(searchTotal/pageSize):1;
@@ -2081,25 +2091,60 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
       // Init pagination bar on page load
       renderPagination();
-      async function addTaskWithBrowse(el){
-        pendingMagnet=el.getAttribute('data-magnet');
-        pendingTitle=el.getAttribute('data-title')||'';
+      function selectedResults(){
+        return Array.prototype.slice.call(document.querySelectorAll('.result-check:checked'));
+      }
+      function updateSelectedCount(){
+        var boxes=document.querySelectorAll('.result-check');
+        var n=selectedResults().length;
+        var label=document.getElementById('batch-count');
+        if(label)label.textContent = n ? '{{index .T "batch_selected"}}'.replace('%d', n) : '{{index .T "batch_none_selected"}}';
+        var btn=document.getElementById('batch-add-btn');
+        if(btn){btn.disabled = n===0; btn.style.opacity = n===0 ? '.5' : '1';}
+        var all=document.getElementById('select-all-results');
+        if(all){
+          all.checked = n>0 && n===boxes.length;
+          all.indeterminate = n>0 && n<boxes.length;
+        }
+      }
+      function toggleSelectAllResults(checked){
+        document.querySelectorAll('.result-check').forEach(function(cb){cb.checked=checked;});
+        updateSelectedCount();
+      }
+      function addSelectedTasks(){
+        var items=selectedResults();
+        pendingMagnets=items.map(function(el){return el.getAttribute('data-magnet');}).filter(Boolean);
+        if(!pendingMagnets.length)return;
         window._browseShowSubdir=true;
-        browseCallback=function(id){var sp=document.getElementById('browse-subdir')?.value?.trim()||'';closeModal();doAddTask(id,sp);};
+        browseCallback=function(id){
+          var box=document.getElementById('browse-subdir');
+          var sp=box?box.value.trim():'';
+          closeModal();
+          doAddTasks(id,sp);
+        };
         browseDirs('0');
       }
-      async function doAddTask(cid,savepath){
+      async function doAddTasks(cid,savepath){
         closeModal();
+        if(!pendingMagnets.length)return;
+        var count=pendingMagnets.length;
         try{
-          var body='tasks='+encodeURIComponent(pendingMagnet);
+          var body='tasks='+encodeURIComponent(pendingMagnets.join('\n'));
           if(cid&&cid!=='0')body+='&cid='+encodeURIComponent(cid);
           if(savepath)body+='&savepath='+encodeURIComponent(savepath);
-          if(pendingTitle)body+='&title='+encodeURIComponent(pendingTitle);
-          var r=await fetch('/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body});
+          var r=await fetch('/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},body:body});
           var j=await r.json();
-          if(j.status==='ok'){alertModal('{{index .T "task_added"}}');}else{alertModal(j.message||'{{index .T "add_failed"}}');}
+          if(j.status==='ok'){
+            alertModal(j.message||'{{index .T "batch_added"}}'.replace('%d',count));
+            document.querySelectorAll('.result-check').forEach(function(cb){cb.checked=false;});
+            var all=document.getElementById('select-all-results');
+            if(all){all.checked=false;all.indeterminate=false;}
+            updateSelectedCount();
+          }else{
+            alertModal(j.message||'{{index .T "add_failed"}}');
+          }
         }catch(e){alertModal(e.message);}
-        pendingMagnet='';
+        pendingMagnets=[];
       }
       var browseTargetId='sub-cid';
       var browseCallback=null;

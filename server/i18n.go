@@ -433,6 +433,11 @@ var translations = map[string]map[string]string{
 		"select_add":           "选此目录添加",
 		"select_dir_add":       "选择目标目录 (当前: %s)",
 		"task_added":           "已添加离线任务",
+		"batch_none_selected": "未选中任何资源",
+		"batch_selected":      "已选 %d 项",
+		"batch_add_btn":       "添加选中",
+		"batch_added":         "已提交 %d 个任务",
+		"select_all":          "全选",
 		"add_failed":           "添加任务失败",
 		"close_btn":            "关闭",
 		// 缓存库列表
@@ -882,6 +887,11 @@ var translations = map[string]map[string]string{
 		"select_add":           "Add Here",
 		"select_dir_add":       "Select Target Directory (current: %s)",
 		"task_added":           "Task added",
+		"batch_none_selected": "No resources selected",
+		"batch_selected":      "%d selected",
+		"batch_add_btn":       "Add selected",
+		"batch_added":         "Submitted %d task(s)",
+		"select_all":          "Select all",
 		"add_failed":           "Failed to add task",
 		"close_btn":            "Close",
 		// Cache library
