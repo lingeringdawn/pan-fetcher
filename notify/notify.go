@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -216,16 +217,62 @@ func EventFromMessage(t EventType, title, body string) Event {
 	return Event{Type: t, Time: now(), Title: title, Body: body}
 }
 
+// WeChat Work rejects markdown content longer than 4096 bytes. A batch
+// submission or a busy feed can exceed that as soon as every name is listed, so
+// the list is capped by both count and byte length rather than trusting the
+// caller to keep it short.
+const (
+	weworkContentLimit = 4096
+	// Room for the JSON envelope and the "and N more" tail, so appending them
+	// cannot push the content back over the limit.
+	weworkContentRoom = 320
+	maxListedNames    = 20
+	maxNameRunes      = 100
+)
+
+// appendNameList writes names as markdown list items, stopping before the builder
+// would pass the safe limit. It returns how many were written.
+func appendNameList(b *strings.Builder, names []string) (listed int) {
+	limit := weworkContentLimit - weworkContentRoom
+	for _, n := range names {
+		if listed >= maxListedNames {
+			break
+		}
+		line := "\n> - " + clipRunes(n, maxNameRunes)
+		if b.Len()+len(line) > limit {
+			break
+		}
+		b.WriteString(line)
+		listed++
+	}
+	return
+}
+
+// clipRunes shortens s to at most n runes.
+//
+// Byte slicing would cut a multi-byte character in half and emit a replacement
+// rune, so the count is taken in runes.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
+}
+
 // TaskSubmitted formats a message for magnet task submission.
 func TaskSubmitted(count int, cid string, names []string) string {
-	msg := fmt.Sprintf("## 离线任务已提交\n> **数量**: %d 个\n> **目标目录**: %s\n> **时间**: %s", count, cid, now().Format("15:04:05"))
-	if len(names) > 0 {
-		msg += "\n> **资源**:"
-		for _, n := range names {
-			msg += "\n> - " + n
-		}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## 离线任务已提交\n> **数量**: %d 个\n> **目标目录**: %s\n> **时间**: %s",
+		count, cid, now().Format("15:04:05"))
+	if len(names) == 0 {
+		return b.String()
 	}
-	return msg
+	b.WriteString("\n> **资源**:")
+	listed := appendNameList(&b, names)
+	if rest := len(names) - listed; rest > 0 {
+		fmt.Fprintf(&b, "\n> … 另有 %d 个未列出", rest)
+	}
+	return b.String()
 }
 
 // TaskSubmittedEvent builds the event for a task submission.
@@ -257,14 +304,18 @@ func TaskFailedEvent(name, cid string) Event {
 
 // RSSFound formats a message when new items are found in RSS feed.
 func RSSFound(subName string, count int, names []string) string {
-	msg := fmt.Sprintf("## RSS 新资源\n> **订阅**: %s\n> **新增**: %d 条\n> **时间**: %s", subName, count, now().Format("15:04:05"))
-	if len(names) > 0 {
-		msg += "\n> **资源**:"
-		for _, n := range names {
-			msg += "\n> - " + n
-		}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## RSS 新资源\n> **订阅**: %s\n> **新增**: %d 条\n> **时间**: %s",
+		subName, count, now().Format("15:04:05"))
+	if len(names) == 0 {
+		return b.String()
 	}
-	return msg
+	b.WriteString("\n> **资源**:")
+	listed := appendNameList(&b, names)
+	if rest := len(names) - listed; rest > 0 {
+		fmt.Fprintf(&b, "\n> … 另有 %d 个未列出", rest)
+	}
+	return b.String()
 }
 
 // RSSFoundEvent builds the event for new RSS resources.
